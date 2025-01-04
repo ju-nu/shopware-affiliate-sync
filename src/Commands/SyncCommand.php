@@ -1,4 +1,5 @@
 <?php
+// src/Commands/SyncCommand.php
 
 namespace JUNU\RealADCELL\Commands;
 
@@ -7,7 +8,6 @@ use JUNU\RealADCELL\Service\CsvService;
 use JUNU\RealADCELL\Service\OpenAiService;
 use JUNU\RealADCELL\Service\ShopwareService;
 use JUNU\RealADCELL\Utils\CsvRowMapper;
-use JUNU\RealADCELL\Service\UuidService;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -15,9 +15,13 @@ use Symfony\Component\Console\Output\OutputInterface;
 /**
  * SyncCommand
  * -----------
- * Liest CSVs, rewritet Beschreibungen via OpenAI,
- * erstellt / updatet Produkte in Shopware
- * -> nun mit product ID, taxId, etc.
+ * - Reads multiple CSVs (defined in .env) and processes them
+ * - Loads categories (tree), passes "Parent > Child" paths to ChatGPT, picks the deepest
+ * - Creates/updates products in Shopware:
+ *   -> Uses coverId (set after creation)
+ *   -> listPrice if brutto < original => listPrice = original
+ *   -> defaultTaxId from ShopwareService
+ *   -> Manufacturer from CSV or fallback from ENV
  */
 class SyncCommand extends Command
 {
@@ -25,41 +29,47 @@ class SyncCommand extends Command
 
     protected function configure()
     {
-        $this->setDescription('Synchronisiert Produkte aus CSV in Shopware (deutsche Beschreibungen, Bilder, etc.)');
+        $this->setDescription(
+            'Synchronize CSV -> Shopware with category hierarchy, ' .
+            'two-step coverId assignment, manufacturer fallback, and listPrice logic.'
+        );
     }
 
     protected function execute(InputInterface $input, OutputInterface $output)
     {
         $logger = LoggerFactory::createLogger('sync');
 
-        // CSV-Definitionen
+        // 1) CSV definitions from env
         $csvDefs = $this->getCsvDefinitions($_ENV);
         if (empty($csvDefs)) {
-            $logger->error("Keine CSV-Definitionen gefunden (CSV_URL_x). Abbruch.");
+            $logger->error("No CSV definitions found (CSV_URL_x). Aborting.");
             return Command::FAILURE;
         }
 
-        // Services
+        // 2) Services
         $shopwareService = new ShopwareService($logger);
         $openAiService   = new OpenAiService($logger);
         $csvService      = new CsvService($logger);
 
         try {
+            // Authenticate => load token, salesChannelId, defaultTaxId, etc.
             $shopwareService->authenticate();
 
-            // Hole alle Kategorien (z.B. für OpenAI-Kategorisierung)
-            $categoryMap     = $shopwareService->getAllCategories();    
-            $deliveryTimeMap = $shopwareService->getAllDeliveryTimes();
+            // "Parent > Child" => categoryId
+            $categoryMap   = $shopwareService->getAllCategories();
+            $deliveryTimes = $shopwareService->getAllDeliveryTimes();
 
-            foreach ($csvDefs as $def) {
-                $csvUrl  = $def['url'];
-                $csvId   = $def['id'];
+            foreach ($csvDefs as $idx => $def) {
+                $csvUrl  = $def['url']     ?? '';
+                $csvId   = $def['id']      ?? "CSV{$idx}";
                 $mapping = $def['mapping'] ?? '';
 
-                $logger->info("== CSV '{$csvId}' wird verarbeitet ==");
+                $logger->info("=== Processing CSV '$csvId' ===");
+
+                // Parse CSV (enforcing must-have columns, applying mappings, etc.)
                 $rows = $csvService->fetchAndParseCsv($csvUrl, $mapping);
                 if (empty($rows)) {
-                    $logger->warning("Keine Zeilen gefunden für CSV '{$csvId}'. Überspringe.");
+                    $logger->warning("No rows for CSV '$csvId'. Skipping.");
                     continue;
                 }
 
@@ -67,150 +77,169 @@ class SyncCommand extends Command
                 $updatedCount = 0;
                 $skippedCount = 0;
                 $total        = count($rows);
-                $index        = 0;
 
-                foreach ($rows as $row) {
-                    $index++;
-                    $logger->info("Zeile {$index}/{$total} für '{$csvId}'...");
+                for ($i=0; $i < $total; $i++) {
+                    $rowIndex = $i + 1;
+                    $logger->info("Row $rowIndex / $total ...");
 
-                    $mapped = CsvRowMapper::mapRow($row, $csvId);
+                    // Map row to consistent structure
+                    $mapped = CsvRowMapper::mapRow($rows[$i], $csvId);
 
-                    // Falls EAN + AAN beide fehlen => skip
+                    // If EAN + AAN missing => skip
                     if (empty($mapped['ean']) && empty($mapped['aan'])) {
-                        $logger->warning("EAN und AAN fehlen => skip");
+                        $logger->warning("Row #$rowIndex: No EAN/AAN => skip");
                         $skippedCount++;
                         continue;
                     }
 
-                    // customFields: wir möchten 'real_productlink' => $mapped['deeplink'],
-                    // Falls CSV-Spalte 'Produkt-Deeplink' => $mapped['deeplink']
-                    // -> wir übernehmen den Wert. Falls leer => leeren String
-                    $deeplink = $mapped['deeplink'] ?? '';
+                    // Manufacturer from CSV or fallback from ENV
+                    $manufacturerId = $shopwareService->findOrCreateManufacturerForCsv(
+                        (string)$idx,
+                        $mapped['manufacturer']
+                    );
 
-                    // Prüfe, ob bereits Produkt existiert
-                    $existing = $shopwareService->findProductByNumber($mapped['productNumber']);
+                    // Category from ChatGPT
+                    $catId = null;
+                    if (!empty($mapped['categoryHint'])) {
+                        $bestCatPath = $openAiService->bestCategory(
+                            $mapped['title'],
+                            $mapped['description'],
+                            $mapped['categoryHint'],
+                            array_keys($categoryMap)
+                        );
+                        if ($bestCatPath && isset($categoryMap[$bestCatPath])) {
+                            $catId = $categoryMap[$bestCatPath];
+                        }
+                    }
 
-                    // Deutsche Beschreibung via OpenAI
+                    // Delivery time
+                    $deliveryTimeId = null;
+                    if (!empty($mapped['deliveryTimeCsv'])) {
+                        $bestDtName = $openAiService->bestDeliveryTime(
+                            $mapped['deliveryTimeCsv'],
+                            array_keys($deliveryTimes)
+                        );
+                        if ($bestDtName && isset($deliveryTimes[$bestDtName])) {
+                            $deliveryTimeId = $deliveryTimes[$bestDtName];
+                        }
+                    }
+
+                    // Price logic
+                    $priceBrutto   = floatval(str_replace(',', '.', $mapped['priceBrutto']));
+                    $originalPrice = floatval(str_replace(',', '.', $mapped['listPrice']));
+
+                    // Upload images => returns array of mediaIds
+                    $mediaIds = $shopwareService->uploadImages([$mapped['imageUrl']]);
+
+                    // Rewritten desc in German
                     $rewrittenDesc = $openAiService->rewriteDescription(
-                        $mapped['title'], 
+                        $mapped['title'],
                         $mapped['description']
                     );
 
+                    // Check if product exists
+                    $existing = $shopwareService->findProductByNumber($mapped['productNumber']);
+
+                    // If not => create
                     if (!$existing) {
-                        // Neuerstellung
-                        $manufacturerId = $shopwareService->findOrCreateManufacturer($mapped['manufacturer']);
-
-                        // Kategory via OpenAI
-                        // Falls leer => fallback?
-                        $categoryId = null;
-                        if (!empty($mapped['categoryHint'])) {
-                            $bestCatName = $openAiService->bestCategory(
-                                $mapped['title'],
-                                $mapped['description'],
-                                $mapped['categoryHint'],
-                                array_keys($categoryMap)
-                            );
-                            if ($bestCatName && isset($categoryMap[$bestCatName])) {
-                                $categoryId = $categoryMap[$bestCatName];
-                            }
-                        }
-                        // Falls wir zwingend eine Kategorie brauchen, setze fallback
-                        if (empty($categoryId)) {
-                            // z.B. default-Kategorie:
-                            // $categoryId = 'SOME-DEFAULT-CATEGORY-ID';
-                            // oder ein leeres Array => createProduct(...) => 'categories' => []
-                        }
-
-                        // Delivery Time
-                        $deliveryTimeId = null;
-                        if (!empty($mapped['deliveryTimeCsv'])) {
-                            $bestDtName = $openAiService->bestDeliveryTime(
-                                $mapped['deliveryTimeCsv'],
-                                array_keys($deliveryTimeMap)
-                            );
-                            if ($bestDtName && isset($deliveryTimeMap[$bestDtName])) {
-                                $deliveryTimeId = $deliveryTimeMap[$bestDtName];
-                            }
-                        }
-
-                        // Price
-                        $priceBrutto = floatval(str_replace(',', '.', $mapped['priceBrutto']));
-                        $listPrice   = floatval(str_replace(',', '.', $mapped['listPrice']));
-
-                        // Bilder
-                        $imageIds = $shopwareService->uploadImages([$mapped['imageUrl']]);
-
-                        // Erzeuge finalen payload
-                        $newProductPayload = [
-                            'id'            => UuidService::generate(), // ^[0-9a-f]{32}$
+                        // Step 1: create product payload
+                        $payload = [
+                            // 'id' => auto in createProduct if empty
                             'name'          => $mapped['title'],
                             'productNumber' => $mapped['productNumber'],
                             'stock'         => 9999,
                             'description'   => $rewrittenDesc,
                             'ean'           => $mapped['ean'],
                             'manufacturerId'=> $manufacturerId,
-                            // taxId kommt in ShopwareService->createProduct automatisch
                             'price' => [[
-                                'currencyId' => 'b7d2554b0ce847cd82f3ac9bd1c0dfca', 
+                                'currencyId' => 'b7d2554b0ce847cd82f3ac9bd1c0dfca',
                                 'gross'      => $priceBrutto,
                                 'net'        => ($priceBrutto / 1.19),
                                 'linked'     => false,
                             ]],
                             'active' => true,
-                            'customFields' => [
-                                'real_productlink' => $deeplink,
-                                'shipping_general' => $mapped['shippingGeneral'] ?? '',
-                            ],
+                            'categories' => $catId ? [[ 'id' => $catId ]] : [],
                         ];
 
-                        if ($listPrice > 0) {
-                            $newProductPayload['price'][0]['listPrice'] = [
-                                'gross'  => $listPrice,
-                                'net'    => ($listPrice / 1.19),
+                        // If AAN => manufacturerNumber
+                        if (!empty($mapped['aan'])) {
+                            $payload['manufacturerNumber'] = $mapped['aan'];
+                        }
+
+                        // If original price is bigger => set listPrice
+                        if (!empty($originalPrice) && $originalPrice > $priceBrutto) {
+                            $payload['price'][0]['listPrice'] = [
+                                'gross'  => $originalPrice,
+                                'net'    => ($originalPrice / 1.19),
                                 'linked' => false,
                             ];
                         }
 
-                        if ($categoryId) {
-                            $newProductPayload['categories'] = [[ 'id' => $categoryId ]];
-                        } else {
-                            // ensure at least an empty array
-                            $newProductPayload['categories'] = [];
-                        }
-
                         if ($deliveryTimeId) {
-                            $newProductPayload['deliveryTimeId'] = $deliveryTimeId;
+                            $payload['deliveryTimeId'] = $deliveryTimeId;
                         }
 
-                        // Bilder -> cover
-                        if (!empty($imageIds)) {
-                            $newProductPayload['media'] = [];
-                            foreach ($imageIds as $pos => $mid) {
-                                $newProductPayload['media'][] = [
-                                    'mediaId'   => $mid,
-                                    'position'  => $pos,
-                                    'cover'     => ($pos === 0),
-                                    'highlight' => ($pos === 0),
+                        // custom fields from env
+                        $cfDeeplink = $_ENV['SHOPWARE_CUSTOMFIELD_DEEPLINK'] ?? 'real_productlink';
+                        $cfShipping = $_ENV['SHOPWARE_CUSTOMFIELD_SHIPPING_GENERAL'] ?? 'shipping_general';
+                        $payload['customFields'] = [
+                            $cfDeeplink => ($mapped['deeplink'] ?? ''),
+                            $cfShipping => ($mapped['shippingGeneral'] ?? ''),
+                        ];
+
+                        // Add media references (no coverId yet)
+                        if (!empty($mediaIds)) {
+                            $payload['media'] = [];
+                            foreach ($mediaIds as $pos => $mid) {
+                                $payload['media'][] = [
+                                    'mediaId'  => $mid,
+                                    'position' => $pos,
+                                    // no 'cover' => true
                                 ];
                             }
                         }
 
-                        // Erstelle Produkt
-                        if ($shopwareService->createProduct($newProductPayload)) {
-                            $logger->info("Produkt [{$mapped['title']}] angelegt.");
+                        // Create
+                        if ($shopwareService->createProduct($payload)) {
+                            $logger->info("Created product [{$mapped['title']}]");
+
+                            // Step 2: if we have media => set coverId in a second call
+                            if (!empty($mediaIds)) {
+                                // Let’s pick the first
+                                $coverId = $mediaIds[0];
+
+                                // We'll find the newly assigned product ID
+                                // either from $payload['id'] if we forced an id
+                                // or we might re-search by productNumber
+                                $productId = $payload['id'] ?? null;
+                                if (empty($productId)) {
+                                    // If we didn't set 'id' in the payload, we re-check Shopware
+                                    $justCreated = $shopwareService->findProductByNumber($mapped['productNumber']);
+                                    $productId   = $justCreated['id'] ?? null;
+                                }
+
+                                if ($productId && $coverId) {
+                                    $coverPayload = [
+                                        'id'      => $productId,
+                                        'coverId' => $coverId,
+                                    ];
+                                    $okCover = $shopwareService->updateProduct($productId, $coverPayload);
+                                    if ($okCover) {
+                                        $logger->info("Cover ID set to $coverId for product #$productId");
+                                    } else {
+                                        $logger->warning("Failed to set cover ID $coverId for product #$productId");
+                                    }
+                                }
+                            }
                             $createdCount++;
                         } else {
-                            $logger->warning("Fehler beim Erstellen des Produkts [{$mapped['title']}]");
+                            $logger->warning("Failed creating product [{$mapped['title']}]");
                             $skippedCount++;
                         }
 
                     } else {
-                        // Update
+                        // Update existing
                         $existingId = $existing['id'];
-
-                        $priceBrutto = floatval(str_replace(',', '.', $mapped['priceBrutto']));
-                        $listPrice   = floatval(str_replace(',', '.', $mapped['listPrice']));
-
                         $updatePayload = [
                             'id'    => $existingId,
                             'price' => [[
@@ -219,43 +248,48 @@ class SyncCommand extends Command
                                 'net'        => ($priceBrutto / 1.19),
                                 'linked'     => false,
                             ]],
-                            'customFields' => [
-                                'real_productlink' => $deeplink,
-                                'shipping_general' => $mapped['shippingGeneral'] ?? '',
-                            ],
                         ];
-
-                        if ($listPrice > 0) {
+                        if (!empty($originalPrice) && $originalPrice > $priceBrutto) {
                             $updatePayload['price'][0]['listPrice'] = [
-                                'gross'  => $listPrice,
-                                'net'    => ($listPrice / 1.19),
+                                'gross'  => $originalPrice,
+                                'net'    => ($originalPrice / 1.19),
                                 'linked' => false,
                             ];
                         }
-                        // optional: update deliveryTimeId => ...
-                        
+
+                        // customFields
+                        $cfDeeplink = $_ENV['SHOPWARE_CUSTOMFIELD_DEEPLINK'] ?? 'real_productlink';
+                        $cfShipping = $_ENV['SHOPWARE_CUSTOMFIELD_SHIPPING_GENERAL'] ?? 'shipping_general';
+                        $updatePayload['customFields'] = [
+                            $cfDeeplink => ($mapped['deeplink'] ?? ''),
+                            $cfShipping => ($mapped['shippingGeneral'] ?? ''),
+                        ];
+
                         if ($shopwareService->updateProduct($existingId, $updatePayload)) {
-                            $logger->info("Produkt [{$mapped['title']}] aktualisiert.");
+                            $logger->info("Updated product [{$mapped['title']}]");
                             $updatedCount++;
                         } else {
-                            $logger->warning("Fehler beim Update des Produkts [{$mapped['title']}]");
+                            $logger->warning("Failed updating product [{$mapped['title']}]");
                             $skippedCount++;
                         }
                     }
-                } // foreach row
+                } // end for each row
 
-                $logger->info("CSV '{$csvId}' abgeschlossen. Created=$createdCount, Updated=$updatedCount, Skipped=$skippedCount");
-            } // foreach csv
+                $logger->info("CSV '$csvId' done. Created=$createdCount, Updated=$updatedCount, Skipped=$skippedCount");
+            } // end foreach CSV
 
         } catch (\Throwable $e) {
-            $logger->error("Sync-Fehler: {$e->getMessage()}");
+            $logger->error("Sync error: {$e->getMessage()}");
             return Command::FAILURE;
         }
 
-        $logger->info("Alle CSVs erfolgreich verarbeitet.");
+        $logger->info("All CSVs processed successfully.");
         return Command::SUCCESS;
     }
 
+    /**
+     * Gather CSV definitions from ENV (CSV_URL_1, CSV_ID_1, CSV_MAPPING_1, etc.).
+     */
     private function getCsvDefinitions(array $envVars): array
     {
         $defs = [];

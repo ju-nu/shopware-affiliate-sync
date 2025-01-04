@@ -41,9 +41,9 @@ class CsvRowMapper
         //  - else empty
         $productNumber = '';
         if (!empty($aan)) {
-            $productNumber = $csvId . $aan;
+            $productNumber = $csvId . '-' . $aan;
         } elseif (!empty($ean)) {
-            $productNumber = $csvId . $ean;
+            $productNumber = $csvId . '-' . $ean;
         }
 
         return [

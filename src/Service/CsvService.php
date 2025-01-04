@@ -4,10 +4,6 @@ namespace JUNU\RealADCELL\Service;
 
 use Psr\Log\LoggerInterface;
 
-/**
- * Class CsvService
- * Fetches and parses CSV files (semicolon-separated, quoted fields).
- */
 class CsvService
 {
     private LoggerInterface $logger;
@@ -18,11 +14,12 @@ class CsvService
     }
 
     /**
-     * Download and parse a semicolon-separated CSV.
+     * Download and parse a semicolon-separated CSV,
+     * then enforce that certain "must-have" columns always exist in the parsed rows.
      *
-     * @param string $csvUrl      The URL of the CSV.
+     * @param string $csvUrl      The URL of the CSV
      * @param string $csvMapping  e.g. "ext_Foo=Foo|ext_Bar=Bar"
-     * @return array              An array of associative rows.
+     * @return array              An array of associative rows
      */
     public function fetchAndParseCsv(string $csvUrl, string $csvMapping): array
     {
@@ -50,7 +47,15 @@ class CsvService
         $headers = str_getcsv(array_shift($lines), ';', '"');
         $headers = array_map('trim', $headers);
 
+        // Build an index: headerName => position
+        // so we can quickly do data[headerName] = colValue
+        $headerIndex = [];
+        foreach ($headers as $idx => $hName) {
+            $headerIndex[$hName] = $idx; // e.g. $headerIndex["Produkt-Deeplink"] = 0
+        }
+
         // Parse column mappings
+        // e.g. "ext_Foo=Foo|ext_Bar=Bar" => we copy columns from ext_Foo -> Foo if Foo is empty
         $mappingPairs = explode('|', $csvMapping);
         $columnMappings = [];
         foreach ($mappingPairs as $pair) {
@@ -62,21 +67,51 @@ class CsvService
             }
         }
 
+        // Define the "must-have" columns
+        // If they are missing in the final row, we'll set them to ""
+        $mustHaveCols = [
+            "Produkt-Deeplink",
+            "Produkt-Titel",
+            "Produktbeschreibung",
+            "Bruttopreis",
+            "Streichpreis",
+            "Währung",
+            "europäische Artikelnummer EAN",
+            "Anbieter Artikelnummer AAN",
+            "Produktbild-URL",
+            "Produktkategorie",
+            "Versandkosten Allgemein",
+            "Lieferzeit",
+            "Inhalt",
+            "Grundpreis",
+            "Grundpreiseinheit"
+        ];
+
         $rows = [];
         foreach ($lines as $line) {
-            // Parse row
+            // Split the row
             $cols = str_getcsv($line, ';', '"');
-            if (count($cols) !== count($headers)) {
-                $this->logger->warning("CSV row column mismatch. Skipping: $line");
-                continue;
-            }
-            $data = array_combine($headers, $cols);
 
-            // Apply extra column mappings if the 'to' column is empty
-            foreach ($columnMappings as $extColumn => $mainColumn) {
-                if (isset($data[$extColumn]) && isset($data[$mainColumn])) {
-                    if (empty($data[$mainColumn])) {
-                        $data[$mainColumn] = $data[$extColumn];
+            // Build an associative array for the row
+            $data = [];
+
+            // Now ensure "must-have" columns are defined (if they don't exist, set to "")
+            foreach ($mustHaveCols as $colName) {
+                if (!array_key_exists($colName, $data)) {
+                    $data[$colName] = "";
+                }
+            }
+
+            foreach ($headers as $hdrIndex => $hdrName) {
+                // be defensive
+                $data[$hdrName] = isset($cols[$hdrIndex]) ? $cols[$hdrIndex] : '';
+            }
+
+            // Apply the "mapping" fallback. If the target column is empty, copy from the source
+            foreach ($columnMappings as $fromCol => $toCol) {
+                if (isset($data[$fromCol]) && isset($data[$toCol])) {
+                    if (empty($data[$toCol]) && !empty($data[$fromCol])) {
+                        $data[$toCol] = $data[$fromCol];
                     }
                 }
             }
