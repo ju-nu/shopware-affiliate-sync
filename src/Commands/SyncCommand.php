@@ -19,14 +19,15 @@ use Symfony\Component\Console\Output\OutputInterface;
  * - For each product:
  *   -> If no EAN + AAN => skip
  *   -> Manufacturer from CSV or fallback from ENV
- *   -> Category from ChatGPT (lowest child in "Parent > Child" style)
- *   -> Delivery time from ChatGPT
+ *   -> For NEW products only: Category & Delivery Time via ChatGPT, Rewrite description
  *   -> Price logic: 
  *      * If no 'Streichpreis' => price = 'Bruttopreis'
  *      * If 'Streichpreis' => price = 'Streichpreis', listPrice = 'Bruttopreis'
  *   -> Cover in a single call: 
  *      $payload['cover'] = [ 'mediaId' => $mediaIds[0] ];
  *      $payload['media'] = array_map(fn($id) => ['mediaId' => $id], $mediaIds);
+ *
+ * Note: For EXISTING products, we skip unnecessary ChatGPT calls to avoid overhead.
  */
 class SyncCommand extends Command
 {
@@ -35,9 +36,7 @@ class SyncCommand extends Command
     protected function configure()
     {
         $this->setDescription(
-            'Synchronize CSV -> Shopware: one-step cover assignment, ' .
-            'default manufacturer from ENV, ' .
-            'and updated price logic (listPrice & brutto).'
+            'Synchronize CSV -> Shopware, skipping unnecessary OpenAI calls for existing products.'
         );
     }
 
@@ -107,32 +106,6 @@ class SyncCommand extends Command
                         $mapped['manufacturer']
                     );
 
-                    // Category => use ChatGPT if we have a hint
-                    $catId = null;
-                    if (!empty($mapped['categoryHint'])) {
-                        $bestCatPath = $openAiService->bestCategory(
-                            $mapped['title'],
-                            $mapped['description'],
-                            $mapped['categoryHint'],
-                            array_keys($categoryMap)  // e.g. "Electronics > iPads"
-                        );
-                        if ($bestCatPath && isset($categoryMap[$bestCatPath])) {
-                            $catId = $categoryMap[$bestCatPath];
-                        }
-                    }
-
-                    // Delivery time => ChatGPT
-                    $deliveryTimeId = null;
-                    if (!empty($mapped['deliveryTimeCsv'])) {
-                        $bestDt = $openAiService->bestDeliveryTime(
-                            $mapped['deliveryTimeCsv'],
-                            array_keys($deliveryTimes)
-                        );
-                        if ($bestDt && isset($deliveryTimes[$bestDt])) {
-                            $deliveryTimeId = $deliveryTimes[$bestDt];
-                        }
-                    }
-
                     // Price logic:
                     // if no Streichpreis => price=Bruttopreis; listPrice empty
                     // if Streichpreis => price=Streich, listPrice=Brutto
@@ -142,7 +115,7 @@ class SyncCommand extends Command
                     // Default (no discount)
                     $actualPrice = $brutto;
                     $listPrice   = 0.0;
-                    if (!empty($streichpreis)) {
+                    if ($streichpreis > 0) {
                         // If we have a streichpreis => that is the actual price
                         // brutto => becomes listPrice
                         $actualPrice = $streichpreis;
@@ -152,19 +125,45 @@ class SyncCommand extends Command
                     // Upload images => returns array of media IDs
                     $mediaIds = $shopwareService->uploadImages([$mapped['imageUrl']]);
 
-                    // Rewrite description
-                    $rewrittenDesc = $openAiService->rewriteDescription(
-                        $mapped['title'],
-                        $mapped['description']
-                    );
-
                     // Check if product exists (by productNumber)
                     $existing = $shopwareService->findProductByNumber($mapped['productNumber']);
 
                     if (!$existing) {
-                        // CREATE product
+                        // --- CREATE NEW PRODUCT (ChatGPT calls allowed) ---
+
+                        // Category => only for new products
+                        $catId = null;
+                        if (!empty($mapped['categoryHint'])) {
+                            $bestCatPath = $openAiService->bestCategory(
+                                $mapped['title'],
+                                $mapped['description'],
+                                $mapped['categoryHint'],
+                                array_keys($categoryMap)  // e.g. "Electronics > iPads"
+                            );
+                            if ($bestCatPath && isset($categoryMap[$bestCatPath])) {
+                                $catId = $categoryMap[$bestCatPath];
+                            }
+                        }
+
+                        // Delivery time => only for new products
+                        $deliveryTimeId = null;
+                        if (!empty($mapped['deliveryTimeCsv'])) {
+                            $bestDt = $openAiService->bestDeliveryTime(
+                                $mapped['deliveryTimeCsv'],
+                                array_keys($deliveryTimes)
+                            );
+                            if ($bestDt && isset($deliveryTimes[$bestDt])) {
+                                $deliveryTimeId = $deliveryTimes[$bestDt];
+                            }
+                        }
+
+                        // Rewrite description => only for new
+                        $rewrittenDesc = $openAiService->rewriteDescription(
+                            $mapped['title'],
+                            $mapped['description']
+                        );
+
                         $payload = [
-                            // 'id' => ShopwareService will generate if missing
                             'name'          => $mapped['title'],
                             'productNumber' => $mapped['productNumber'],
                             'stock'         => 9999,
@@ -178,25 +177,26 @@ class SyncCommand extends Command
                                 'linked'     => false,
                             ]],
                             'active' => true,
-                            // categories => if catId found
-                            'categories' => $catId ? [[ 'id' => $catId ]] : [],
                         ];
 
-                        // If CSV AAN => store as manufacturerNumber
+                        // categories => if catId found
+                        if ($catId) {
+                            $payload['categories'] = [[ 'id' => $catId ]];
+                        }
+
                         if (!empty($mapped['aan'])) {
                             $payload['manufacturerNumber'] = $mapped['aan'];
                         }
 
-                        // If we used a streichpreis => set listPrice => brutto
-                        if (!empty($streichpreis)) {
+                        if ($streichpreis > 0) {
                             $payload['price'][0]['listPrice'] = [
-                                'gross'  => $listPrice,  // which is $brutto
+                                'gross'  => $listPrice,
                                 'net'    => ($listPrice / 1.19),
                                 'linked' => false,
                             ];
                         }
 
-                        if (!empty($deliveryTimeId)) {
+                        if ($deliveryTimeId) {
                             $payload['deliveryTimeId'] = $deliveryTimeId;
                         }
 
@@ -208,10 +208,9 @@ class SyncCommand extends Command
                             $cfShipping => ($mapped['shippingGeneral'] ?? ''),
                         ];
 
-                        // One-step cover usage
+                        // Cover + media in one call
                         if (!empty($mediaIds)) {
                             $payload['cover'] = ['mediaId' => $mediaIds[0]]; // first => cover
-                            // All media => array_map
                             $payload['media'] = array_map(
                                 fn($mId) => ['mediaId' => $mId],
                                 $mediaIds
@@ -228,7 +227,8 @@ class SyncCommand extends Command
                         }
 
                     } else {
-                        // UPDATE existing
+                        // --- UPDATE EXISTING PRODUCT (NO ChatGPT calls) ---
+
                         $existingId = $existing['id'];
                         $updatePayload = [
                             'id' => $existingId,
@@ -239,7 +239,7 @@ class SyncCommand extends Command
                                 'linked'     => false,
                             ]],
                         ];
-                        if (!empty($streichpreis)) {
+                        if ($streichpreis > 0) {
                             $updatePayload['price'][0]['listPrice'] = [
                                 'gross'  => $brutto,  
                                 'net'    => ($brutto / 1.19),
@@ -254,6 +254,8 @@ class SyncCommand extends Command
                             $cfDeeplink => ($mapped['deeplink'] ?? ''),
                             $cfShipping => ($mapped['shippingGeneral'] ?? ''),
                         ];
+
+                        // No rewriting description, no ChatGPT category/delivery
 
                         if ($shopwareService->updateProduct($existingId, $updatePayload)) {
                             $logger->info("Updated product [{$mapped['title']}]");
@@ -298,4 +300,3 @@ class SyncCommand extends Command
         return $defs;
     }
 }
-
