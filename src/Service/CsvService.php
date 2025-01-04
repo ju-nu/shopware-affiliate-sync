@@ -120,8 +120,6 @@ class CsvService
         }
 
         $this->logger->info("Parsed " . count($rows) . " rows from CSV: {$csvUrl}");
-        var_dump($rows);
-        die();
         return $rows;
     }
 }
