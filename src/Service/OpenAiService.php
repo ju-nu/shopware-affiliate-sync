@@ -43,7 +43,7 @@ class OpenAiService
             "ohne den Produkt-Titel zu wiederholen. " .
             "Nutze nur diese vorhandenen Texte:\n\n" .
             "Beschreibung:\n" . $description . "\n\n" .
-            "Produktname:\n" . $$title . "\n\n" .
+            "Produktname:\n" . $title . "\n\n" .
             "Schreibe Sie Conversion-stark, ansprechend und positiv in deutscher Sprache.";
 
         try {
