@@ -1,5 +1,6 @@
 # Composer vendor
 /vendor/
+composer.lock
 
 # Environment files
 .env
