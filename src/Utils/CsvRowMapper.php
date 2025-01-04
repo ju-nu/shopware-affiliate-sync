@@ -4,14 +4,12 @@ namespace JUNU\RealADCELL\Utils;
 
 /**
  * Class CsvRowMapper
- * Maps CSV row data to a more structured product data array.
+ * Updated logic so productNumber is always "CSV_ID + AAN" if AAN is present;
+ * otherwise "CSV_ID + EAN" if EAN is present.
+ * We remove the product title from the 'description' field; only keep CSV description.
  */
 class CsvRowMapper
 {
-    /**
-     * Map a row from the CSV into a standardized array
-     * applying fallback logic (e.g. if "Produktbeschreibung" is empty, use "Produktbeschreibung lang").
-     */
     public static function mapRow(array $row, string $csvId): array
     {
         $deeplink        = $row['Produkt-Deeplink']        ?? '';
@@ -27,22 +25,31 @@ class CsvRowMapper
         $fallbackImage   = $row['Vorschaubild-URL']        ?? '';
         $categoryHint    = $row['Produktkategorie']        ?? '';
         $shippingGeneral = $row['Versandkosten Allgemein'] ?? '';
-        $lieferzeit      = $row['Lieferzeit']             ?? '';
+        $lieferzeit      = $row['Lieferzeit']              ?? '';
 
+        // If "Produktbeschreibung" empty, fallback to "lang"
         if (empty($description)) {
             $description = $descriptionLang;
         }
 
-        // Choose final image
+        // Use mainImage if available, else fallback
         $imageUrl = $mainImage ?: $fallbackImage;
 
-        // Construct productNumber (EAN if present, else csvId + AAN)
-        $productNumber = $ean ? $ean : ($aan ? $csvId . $aan : '');
+        // PRODUCT NUMBER RULE:
+        //  - If AAN present => CSV_ID + AAN
+        //  - else if EAN present => CSV_ID + EAN
+        //  - else empty
+        $productNumber = '';
+        if (!empty($aan)) {
+            $productNumber = $csvId . $aan;
+        } elseif (!empty($ean)) {
+            $productNumber = $csvId . $ean;
+        }
 
         return [
             'deeplink'         => $deeplink,
-            'title'            => $title,
-            'description'      => $description,
+            'title'            => $title,         // We'll keep the title if needed
+            'description'      => $description,   // We'll rewrite it in German via OpenAI (no title included!)
             'priceBrutto'      => $bruttopreis,
             'listPrice'        => $streichpreis,
             'ean'              => $ean,

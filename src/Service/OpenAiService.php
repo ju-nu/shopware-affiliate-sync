@@ -7,7 +7,7 @@ use Psr\Log\LoggerInterface;
 
 /**
  * Class OpenAiService
- * Wraps calls to OpenAI for rewriting product descriptions and category/delivery matching.
+ * Now rewriting descriptions in German, excluding any mention of the product title.
  */
 class OpenAiService
 {
@@ -29,23 +29,26 @@ class OpenAiService
     }
 
     /**
-     * Rewrite the product description using the product title + original description.
+     * Rewrite the product description in German, do NOT repeat the title.
      */
     public function rewriteDescription(string $title, string $description): string
     {
+        // If everything empty, return empty
         if (empty(trim($title)) && empty(trim($description))) {
             return '';
         }
 
-        $prompt = "Rewrite this product description in an appealing, fluent style.\n"
-                . "Use the product title and the given description.\n\n"
-                . "Title: {$title}\n"
-                . "Description: {$description}\n\n"
-                . "Rewrite:";
+        $prompt = 
+            "Bitte schreibe eine deutsche Produktbeschreibung, " .
+            "ohne den Produkt-Titel zu wiederholen. " .
+            "Nutze nur den vorhandenen Beschreibungstext.\n\n" .
+            "Beschreibung:\n" . $description . "\n\n" .
+            "Formuliere es ansprechend und flüssig in deutscher Sprache.";
 
         try {
             $response = $this->client->post('/v1/chat/completions', [
                 'headers' => [
+                    'Accept'        => 'application/json',
                     'Content-Type'  => 'application/json',
                     'Authorization' => "Bearer {$this->openAiKey}",
                 ],
@@ -54,12 +57,12 @@ class OpenAiService
                     'messages' => [
                         [ 'role' => 'user', 'content' => $prompt ]
                     ],
-                    'max_tokens' => 300,
+                    'max_tokens' => 400,
                 ],
             ]);
 
-            $json       = json_decode($response->getBody(), true);
-            $rewritten  = $json['choices'][0]['message']['content'] ?? '';
+            $json = json_decode($response->getBody(), true);
+            $rewritten = $json['choices'][0]['message']['content'] ?? '';
             return trim($rewritten);
 
         } catch (\Throwable $e) {

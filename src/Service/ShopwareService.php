@@ -1,4 +1,5 @@
 <?php
+// src/Service/ShopwareService.php
 
 namespace JUNU\RealADCELL\Service;
 
@@ -7,8 +8,15 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Log\LoggerInterface;
 
 /**
- * Class ShopwareService
- * Handles interaction with the Shopware Admin API.
+ * ShopwareService
+ * --------------
+ * Verantwortlich für:
+ *  - Authentifizierung über die Shopware Admin API (client_credentials)
+ *  - Abfragen von Kategorien, Lieferzeiten, Sales-Channels
+ *  - Hersteller erstellen / suchen
+ *  - Produkte erstellen / aktualisieren
+ *  - Medien / Bilder hochladen (zwei Schritte: media erstellen, dann upload)
+ *  - Hinzufügen eines Sales-Channel-Visibilities, sofern in .env definiert
  */
 class ShopwareService
 {
@@ -19,6 +27,8 @@ class ShopwareService
     private string $clientSecret;
     private ?string $token = null;
 
+    private ?string $salesChannelId = null; // aus dem Sales-Channel-Namen abgeleitet
+
     public function __construct(LoggerInterface $logger)
     {
         $this->logger       = $logger;
@@ -26,36 +36,93 @@ class ShopwareService
         $this->clientId     = $_ENV['SHOPWARE_CLIENT_ID']     ?? '';
         $this->clientSecret = $_ENV['SHOPWARE_CLIENT_SECRET'] ?? '';
 
+        // Guzzle-Client mit base_uri (für relative Pfade) und Timeout
         $this->client = new Client([
-            'timeout' => 30,
+            'base_uri' => $this->apiUrl,
+            'timeout'  => 30,
         ]);
     }
 
-    public function authenticate(): void
-    {
-        try {
-            $response = $this->client->post("{$this->apiUrl}/api/oauth/token", [
-                'json' => [
-                    'grant_type'    => 'client_credentials',
-                    'client_id'     => $this->clientId,
-                    'client_secret' => $this->clientSecret,
-                ]
-            ]);
-            $data       = json_decode((string)$response->getBody(), true);
-            $this->token = $data['access_token'];
-            $this->logger->info("Shopware authentication succeeded.");
-        } catch (GuzzleException $e) {
-            $this->logger->error("Shopware authentication failed: " . $e->getMessage());
-            throw new \RuntimeException("Shopware authentication failed.", 0, $e);
-        }
-    }
-
-    public function getToken(): string
+    /**
+     * Gibt Standard-Header (Accept/Content-Type/Authorization) zurück.
+     */
+    private function getDefaultHeaders(): array
     {
         if (!$this->token) {
             $this->authenticate();
         }
-        return $this->token;
+        return [
+            'Accept'       => 'application/json',
+            'Content-Type' => 'application/json',
+            'Authorization'=> "Bearer {$this->token}",
+        ];
+    }
+
+    /**
+     * Authentifiziert gegen Shopware mit client_credentials.
+     * Schreibt Access-Token in $this->token.
+     */
+    public function authenticate(): void
+    {
+        try {
+            $resp = $this->client->post('/api/oauth/token', [
+                'headers' => [
+                    'Accept'       => 'application/json',
+                    'Content-Type' => 'application/json',
+                ],
+                'json' => [
+                    'grant_type'    => 'client_credentials',
+                    'client_id'     => $this->clientId,
+                    'client_secret' => $this->clientSecret,
+                ],
+            ]);
+
+            $data = json_decode((string)$resp->getBody(), true);
+            $this->token = $data['access_token'] ?? null;
+
+            if (!$this->token) {
+                throw new \RuntimeException("Kein Token in der Authentifizierungs-Antwort gefunden.");
+            }
+            $this->logger->info("Shopware-Authentifizierung erfolgreich.");
+
+            // Nach erfolgreichem Login direkt den Sales-Channel suchen
+            $this->fetchSalesChannelId();
+
+        } catch (GuzzleException $e) {
+            $this->logger->error("Shopware-Authentifizierung fehlgeschlagen: " . $e->getMessage());
+            throw new \RuntimeException("Shopware authentication failed.", 0, $e);
+        }
+    }
+
+    /**
+     * Lädt (einmalig) die Sales-Channel-ID aus dem ENV-Variablennamen
+     * SHOPWARE_SALES_CHANNEL_NAME. Speichert sie in $this->salesChannelId
+     */
+    private function fetchSalesChannelId(): void
+    {
+        $desiredName = $_ENV['SHOPWARE_SALES_CHANNEL_NAME'] ?? 'Storefront';
+        $this->salesChannelId = null;
+
+        try {
+            $response = $this->client->get('/api/sales-channel', [
+                'headers' => $this->getDefaultHeaders(),
+                'query'   => [
+                    'filter[name]' => $desiredName,
+                    'limit'        => 1,
+                ],
+            ]);
+            $data  = json_decode($response->getBody(), true);
+            $items = $data['data'] ?? [];
+
+            if (!empty($items[0]['id'])) {
+                $this->salesChannelId = $items[0]['id'];
+                $this->logger->info("Sales-Channel '$desiredName' gefunden => ID {$this->salesChannelId}");
+            } else {
+                $this->logger->warning("Sales-Channel '$desiredName' nicht gefunden.");
+            }
+        } catch (GuzzleException $e) {
+            $this->logger->error("fetchSalesChannelId error: " . $e->getMessage());
+        }
     }
 
     // ---------------------------------------
@@ -65,14 +132,17 @@ class ShopwareService
     {
         $allCats = [];
         $page    = 1;
+
         do {
             try {
-                $response = $this->client->get("{$this->apiUrl}/api/category", [
-                    'headers' => ['Authorization' => "Bearer " . $this->getToken()],
+                $response = $this->client->get('/api/category', [
+                    'headers' => $this->getDefaultHeaders(),
                     'query'   => ['page' => $page, 'limit' => 50],
                 ]);
+
                 $data  = json_decode((string)$response->getBody(), true);
                 $items = $data['data'] ?? [];
+
                 foreach ($items as $cat) {
                     $catName = $cat['attributes']['name'] ?? '';
                     $catId   = $cat['id']                ?? '';
@@ -80,12 +150,13 @@ class ShopwareService
                         $allCats[$catName] = $catId;
                     }
                 }
+
                 if (count($items) < 50) {
                     break;
                 }
                 $page++;
             } catch (GuzzleException $e) {
-                $this->logger->error("Failed fetching categories page $page: " . $e->getMessage());
+                $this->logger->error("Kategorien Seite $page fehlgeschlagen: " . $e->getMessage());
                 break;
             }
         } while (true);
@@ -100,14 +171,17 @@ class ShopwareService
     {
         $allDts = [];
         $page   = 1;
+
         do {
             try {
-                $response = $this->client->get("{$this->apiUrl}/api/delivery-time", [
-                    'headers' => ['Authorization' => "Bearer " . $this->getToken()],
+                $response = $this->client->get('/api/delivery-time', [
+                    'headers' => $this->getDefaultHeaders(),
                     'query'   => ['page' => $page, 'limit' => 50],
                 ]);
+
                 $data  = json_decode((string)$response->getBody(), true);
                 $items = $data['data'] ?? [];
+
                 foreach ($items as $dt) {
                     $dtName = $dt['attributes']['name'] ?? '';
                     $dtId   = $dt['id']                ?? '';
@@ -115,12 +189,13 @@ class ShopwareService
                         $allDts[$dtName] = $dtId;
                     }
                 }
+
                 if (count($items) < 50) {
                     break;
                 }
                 $page++;
             } catch (GuzzleException $e) {
-                $this->logger->error("Failed fetching delivery times page $page: " . $e->getMessage());
+                $this->logger->error("Lieferzeiten Seite $page fehlgeschlagen: " . $e->getMessage());
                 break;
             }
         } while (true);
@@ -135,20 +210,23 @@ class ShopwareService
     {
         $name = trim($name);
         if (empty($name)) {
-            return null;
+            // Fallback: ein Standard-Herstellername, wenn CSV nichts liefert
+            $name = 'Default Hersteller';
         }
 
-        // Search manufacturer by name
+        // 1) Suchen nach gleichem Namen (Case-insensitive)
         try {
-            $response = $this->client->get("{$this->apiUrl}/api/product-manufacturer", [
-                'headers' => ['Authorization' => "Bearer " . $this->getToken()],
+            $resp = $this->client->get('/api/product-manufacturer', [
+                'headers' => $this->getDefaultHeaders(),
                 'query'   => [
                     'filter[name]' => $name,
                     'limit'        => 50,
-                ]
+                ],
             ]);
-            $data  = json_decode($response->getBody(), true);
+
+            $data  = json_decode((string)$resp->getBody(), true);
             $items = $data['data'] ?? [];
+
             foreach ($items as $m) {
                 $mName = mb_strtolower(trim($m['attributes']['name'] ?? ''));
                 if ($mName === mb_strtolower($name)) {
@@ -156,26 +234,30 @@ class ShopwareService
                 }
             }
         } catch (GuzzleException $e) {
-            $this->logger->warning("Manufacturer search error: " . $e->getMessage());
+            $this->logger->warning("Hersteller-Suche fehlgeschlagen: " . $e->getMessage());
         }
 
-        // Create
+        // 2) Anlegen
         $uuid = UuidService::generate();
+
         try {
-            $resp = $this->client->post("{$this->apiUrl}/api/product-manufacturer", [
-                'headers' => ['Authorization' => "Bearer " . $this->getToken()],
+            $resp = $this->client->post('/api/product-manufacturer', [
+                'headers' => $this->getDefaultHeaders(),
                 'json'    => [
                     'id'   => $uuid,
-                    'name' => $name
-                ]
+                    'name' => $name,
+                ],
             ]);
+
             if ($resp->getStatusCode() !== 204) {
-                $body = (string) $resp->getBody();
-                $this->logger->error("Failed to create manufacturer: $body");
+                $body = (string)$resp->getBody();
+                $this->logger->error("Erstellen des Herstellers fehlgeschlagen: $body");
                 return null;
             }
-            $this->logger->info("Created new manufacturer: {$name} ({$uuid})");
+
+            $this->logger->info("Neuer Hersteller '$name' angelegt (ID $uuid)");
             return $uuid;
+
         } catch (GuzzleException $e) {
             $this->logger->error("Create manufacturer error: " . $e->getMessage());
             return null;
@@ -189,12 +271,12 @@ class ShopwareService
     {
         if (!$ean) return null;
         try {
-            $resp = $this->client->get("{$this->apiUrl}/api/product", [
-                'headers' => ['Authorization' => "Bearer " . $this->getToken()],
+            $resp = $this->client->get('/api/product', [
+                'headers' => $this->getDefaultHeaders(),
                 'query'   => [
                     'filter[ean]' => $ean,
                     'limit'       => 1,
-                ]
+                ],
             ]);
             $data = json_decode($resp->getBody(), true);
             return $data['data'][0] ?? null;
@@ -208,12 +290,12 @@ class ShopwareService
     {
         if (!$productNumber) return null;
         try {
-            $resp = $this->client->get("{$this->apiUrl}/api/product", [
-                'headers' => ['Authorization' => "Bearer " . $this->getToken()],
+            $resp = $this->client->get('/api/product', [
+                'headers' => $this->getDefaultHeaders(),
                 'query'   => [
                     'filter[productNumber]' => $productNumber,
                     'limit'                 => 1,
-                ]
+                ],
             ]);
             $data = json_decode($resp->getBody(), true);
             return $data['data'][0] ?? null;
@@ -225,13 +307,24 @@ class ShopwareService
 
     public function createProduct(array $payload): bool
     {
+        // Wenn wir einen Sales-Channel ermittelt haben, Visibility setzen
+        if (!empty($this->salesChannelId)) {
+            $payload['visibilities'] = [[
+                'salesChannelId' => $this->salesChannelId,
+                'visibility'     => 30, // 'Alle' = 30
+            ]];
+        }
+
+        var_dump($payload);
+
         try {
-            $resp = $this->client->post("{$this->apiUrl}/api/product", [
-                'headers' => ['Authorization' => "Bearer " . $this->getToken()],
+            $resp = $this->client->post('/api/product', [
+                'headers' => $this->getDefaultHeaders(),
                 'json'    => $payload,
             ]);
             if ($resp->getStatusCode() !== 204) {
-                $this->logger->error("Create product failed: " . (string) $resp->getBody());
+                $body = (string)$resp->getBody();
+                $this->logger->error("Produkt-Erstellung fehlgeschlagen: $body");
                 return false;
             }
             return true;
@@ -244,12 +337,13 @@ class ShopwareService
     public function updateProduct(string $id, array $payload): bool
     {
         try {
-            $resp = $this->client->patch("{$this->apiUrl}/api/product/$id", [
-                'headers' => ['Authorization' => "Bearer " . $this->getToken()],
+            $resp = $this->client->patch("/api/product/$id", [
+                'headers' => $this->getDefaultHeaders(),
                 'json'    => $payload,
             ]);
             if ($resp->getStatusCode() !== 204) {
-                $this->logger->error("Update product failed: " . (string) $resp->getBody());
+                $body = (string)$resp->getBody();
+                $this->logger->error("Produkt-Update fehlgeschlagen: $body");
                 return false;
             }
             return true;
@@ -260,22 +354,24 @@ class ShopwareService
     }
 
     // ---------------------------------------
-    // IMAGES
+    // IMAGES / MEDIA
     // ---------------------------------------
     public function findMediaByFilename(string $fileNameWithoutExt): ?string
     {
         try {
-            $resp = $this->client->get("{$this->apiUrl}/api/media", [
-                'headers' => ['Authorization' => "Bearer " . $this->getToken()],
+            $resp = $this->client->get('/api/media', [
+                'headers' => $this->getDefaultHeaders(),
                 'query'   => [
                     'filter[fileName]' => $fileNameWithoutExt,
                     'limit'            => 1,
-                ]
+                ],
             ]);
+
             $data = json_decode($resp->getBody(), true);
-            if (!empty($data['data'])) {
+            if (!empty($data['data'][0]['id'])) {
                 return $data['data'][0]['id'];
             }
+
         } catch (GuzzleException $e) {
             $this->logger->error("findMediaByFilename error: " . $e->getMessage());
         }
@@ -284,18 +380,20 @@ class ShopwareService
 
     public function createMediaEntity(?string $mediaFolderId = null): ?string
     {
-        $mediaId = UuidService::generate();
-        $payload = [ 'id' => $mediaId ];
+        $mediaId = UuidService::generate(); // 32-stelliger Hex-String
+        $payload = ['id' => $mediaId];
+
         if ($mediaFolderId) {
             $payload['mediaFolderId'] = $mediaFolderId;
         }
+
         try {
-            $resp = $this->client->post("{$this->apiUrl}/api/media", [
-                'headers' => ['Authorization' => "Bearer " . $this->getToken()],
+            $resp = $this->client->post('/api/media', [
+                'headers' => $this->getDefaultHeaders(),
                 'json'    => $payload,
             ]);
             if ($resp->getStatusCode() !== 204) {
-                $this->logger->error("Failed to create media entity: " . $resp->getBody());
+                $this->logger->error("createMediaEntity fehlgeschlagen: " . (string)$resp->getBody());
                 return null;
             }
             return $mediaId;
@@ -308,65 +406,78 @@ class ShopwareService
     public function uploadImageFromUrl(string $mediaId, string $imageUrl, string $fileNameWithoutExt): bool
     {
         try {
-            $uploadUrl = "{$this->apiUrl}/api/_action/media/{$mediaId}/upload?fileName=" 
-                . urlencode($fileNameWithoutExt);
+            $uploadUrl = "/api/_action/media/{$mediaId}/upload?fileName=" . urlencode($fileNameWithoutExt);
 
             $resp = $this->client->post($uploadUrl, [
-                'headers' => ['Authorization' => "Bearer " . $this->getToken()],
+                'headers' => $this->getDefaultHeaders(),
                 'json'    => [
                     'url' => $imageUrl,
                 ],
             ]);
             if ($resp->getStatusCode() !== 204) {
-                $this->logger->error("Upload image error: " . $resp->getBody());
+                $this->logger->error("Upload-Image Fehler: " . (string)$resp->getBody());
                 return false;
             }
             return true;
+
         } catch (GuzzleException $e) {
             $this->logger->error("uploadImageFromUrl exception: " . $e->getMessage());
             return false;
         }
     }
 
+    /**
+     * Zweistufiges Hochladen von Bildern:
+     *  1) media-Entität anlegen
+     *  2) uploadImageFromUrl => /api/_action/media/{id}/upload
+     */
     public function uploadImages(array $imageUrls): array
     {
-        $mediaIds = [];
         static $cache = [];
+        $mediaIds     = [];
 
-        foreach ($imageUrls as $url) {
-            if (!$url) continue;
-            $filename            = basename(parse_url($url, PHP_URL_PATH) ?? '');
-            $fileNameWithoutExt  = pathinfo($filename, PATHINFO_FILENAME);
-
-            if (isset($cache[$fileNameWithoutExt])) {
-                $mediaIds[] = $cache[$fileNameWithoutExt];
+        foreach ($imageUrls as $imageUrl) {
+            if (empty($imageUrl)) {
                 continue;
             }
+            try {
+                $filename           = basename(parse_url($imageUrl, PHP_URL_PATH) ?? '');
+                $fileNameWithoutExt = pathinfo($filename, PATHINFO_FILENAME);
 
-            // Check if media with this filename already exists
-            $existing = $this->findMediaByFilename($fileNameWithoutExt);
-            if ($existing) {
-                $this->logger->info("Media already exists for $filename => $existing");
-                $mediaIds[] = $existing;
-                $cache[$fileNameWithoutExt] = $existing;
-                continue;
+                // Check Cache
+                if (isset($cache[$fileNameWithoutExt])) {
+                    $mediaIds[] = $cache[$fileNameWithoutExt];
+                    continue;
+                }
+
+                // Schon in Shopware vorhanden?
+                $existing = $this->findMediaByFilename($fileNameWithoutExt);
+                if ($existing) {
+                    $this->logger->info("Media existiert bereits: $filename => $existing");
+                    $mediaIds[] = $existing;
+                    $cache[$fileNameWithoutExt] = $existing;
+                    continue;
+                }
+
+                // Neu anlegen + upload
+                $newMediaId = $this->createMediaEntity();
+                if (!$newMediaId) {
+                    $this->logger->error("Fehler bei createMediaEntity für: $imageUrl");
+                    continue;
+                }
+
+                if (!$this->uploadImageFromUrl($newMediaId, $imageUrl, $fileNameWithoutExt)) {
+                    $this->logger->error("Fehler bei uploadImageFromUrl für: $imageUrl");
+                    continue;
+                }
+
+                $mediaIds[] = $newMediaId;
+                $cache[$fileNameWithoutExt] = $newMediaId;
+                $this->logger->info("Bild hochgeladen: $imageUrl => $newMediaId");
+
+            } catch (\Throwable $th) {
+                $this->logger->error("Fehler in uploadImages für $imageUrl: " . $th->getMessage());
             }
-
-            // Create new media
-            $mediaId = $this->createMediaEntity();
-            if (!$mediaId) {
-                $this->logger->error("Failed to create media entity for $url");
-                continue;
-            }
-
-            if (!$this->uploadImageFromUrl($mediaId, $url, $fileNameWithoutExt)) {
-                $this->logger->error("Failed to upload $url");
-                continue;
-            }
-
-            $mediaIds[] = $mediaId;
-            $cache[$fileNameWithoutExt] = $mediaId;
-            $this->logger->info("Uploaded image: $url => $mediaId");
         }
 
         return $mediaIds;
