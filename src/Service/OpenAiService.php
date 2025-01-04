@@ -41,9 +41,10 @@ class OpenAiService
         $prompt = 
             "Bitte schreibe eine deutsche Produktbeschreibung, " .
             "ohne den Produkt-Titel zu wiederholen. " .
-            "Nutze nur den vorhandenen Beschreibungstext.\n\n" .
+            "Nutze nur diese vorhandenen Texte:\n\n" .
             "Beschreibung:\n" . $description . "\n\n" .
-            "Formuliere es ansprechend und flüssig in deutscher Sprache.";
+            "Produktname:\n" . $$title . "\n\n" .
+            "Schreibe Sie Conversion-stark, ansprechend und positiv in deutscher Sprache.";
 
         try {
             $response = $this->client->post('/v1/chat/completions', [
