@@ -1,5 +1,4 @@
 <?php
-// src/Commands/SyncCommand.php
 
 namespace JUNU\RealADCELL\Commands;
 
@@ -8,6 +7,7 @@ use JUNU\RealADCELL\Service\CsvService;
 use JUNU\RealADCELL\Service\OpenAiService;
 use JUNU\RealADCELL\Service\ShopwareService;
 use JUNU\RealADCELL\Utils\CsvRowMapper;
+use JUNU\RealADCELL\Service\UuidService;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -15,12 +15,9 @@ use Symfony\Component\Console\Output\OutputInterface;
 /**
  * SyncCommand
  * -----------
- * Liest mehrere CSVs aus (Def. in .env) und erzeugt/aktualisiert Produkte in Shopware.
- * - Bestimmt Kategorien über OpenAI
- * - Schreibt Beschreibungen in Deutsch (ohne Titel) über OpenAiService
- * - Hängt Medien mit cover=true an
- * - Hersteller wird angelegt, falls nicht vorhanden
- * - Legt Visibility für den konfigurierten Sales-Channel an
+ * Liest CSVs, rewritet Beschreibungen via OpenAI,
+ * erstellt / updatet Produkte in Shopware
+ * -> nun mit product ID, taxId, etc.
  */
 class SyncCommand extends Command
 {
@@ -28,44 +25,41 @@ class SyncCommand extends Command
 
     protected function configure()
     {
-        $this->setDescription('Synchronisiert Produkte aus CSV-Dateien in Shopware 6.6 (inkl. Bilder, Kategorien, Hersteller, Sales-Channel).');
+        $this->setDescription('Synchronisiert Produkte aus CSV in Shopware (deutsche Beschreibungen, Bilder, etc.)');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output)
     {
         $logger = LoggerFactory::createLogger('sync');
 
-        // 1) CSV-Definitionen aus ENV ermitteln
+        // CSV-Definitionen
         $csvDefs = $this->getCsvDefinitions($_ENV);
         if (empty($csvDefs)) {
             $logger->error("Keine CSV-Definitionen gefunden (CSV_URL_x). Abbruch.");
             return Command::FAILURE;
         }
 
-        // 2) Services instanzieren
+        // Services
         $shopwareService = new ShopwareService($logger);
         $openAiService   = new OpenAiService($logger);
         $csvService      = new CsvService($logger);
 
         try {
-            // Shopware-Token holen
             $shopwareService->authenticate();
 
-            // Kategorien & Lieferzeiten laden
-            $categoryMap     = $shopwareService->getAllCategories();      // [name => id]
-            $deliveryTimeMap = $shopwareService->getAllDeliveryTimes();   // [name => id]
+            // Hole alle Kategorien (z.B. für OpenAI-Kategorisierung)
+            $categoryMap     = $shopwareService->getAllCategories();    
+            $deliveryTimeMap = $shopwareService->getAllDeliveryTimes();
 
-            // Jedes CSV bearbeiten
             foreach ($csvDefs as $def) {
                 $csvUrl  = $def['url'];
                 $csvId   = $def['id'];
                 $mapping = $def['mapping'] ?? '';
 
-                $logger->info("===== Verarbeite CSV ID '{$csvId}' =====");
-
+                $logger->info("== CSV '{$csvId}' wird verarbeitet ==");
                 $rows = $csvService->fetchAndParseCsv($csvUrl, $mapping);
                 if (empty($rows)) {
-                    $logger->warning("Keine Zeilen für CSV '{$csvId}'. Überspringe.");
+                    $logger->warning("Keine Zeilen gefunden für CSV '{$csvId}'. Überspringe.");
                     continue;
                 }
 
@@ -77,33 +71,39 @@ class SyncCommand extends Command
 
                 foreach ($rows as $row) {
                     $index++;
-                    $logger->info("Zeile {$index} / {$total} für CSV '{$csvId}' wird bearbeitet...");
+                    $logger->info("Zeile {$index}/{$total} für '{$csvId}'...");
 
                     $mapped = CsvRowMapper::mapRow($row, $csvId);
 
-                    // Wenn EAN + AAN fehlen => kein Produkt anlegbar
+                    // Falls EAN + AAN beide fehlen => skip
                     if (empty($mapped['ean']) && empty($mapped['aan'])) {
-                        $logger->warning("Zeile #{$index}: EAN und AAN fehlen, überspringe.");
+                        $logger->warning("EAN und AAN fehlen => skip");
                         $skippedCount++;
                         continue;
                     }
 
-                    // Produktnummer (CSV_ID + AAN oder CSV_ID + EAN) ist in mapRow
-                    $existingProduct = $shopwareService->findProductByNumber($mapped['productNumber']);
+                    // customFields: wir möchten 'real_productlink' => $mapped['deeplink'],
+                    // Falls CSV-Spalte 'Produkt-Deeplink' => $mapped['deeplink']
+                    // -> wir übernehmen den Wert. Falls leer => leeren String
+                    $deeplink = $mapped['deeplink'] ?? '';
 
-                    // Beschreibung via OpenAI in Deutsch
+                    // Prüfe, ob bereits Produkt existiert
+                    $existing = $shopwareService->findProductByNumber($mapped['productNumber']);
+
+                    // Deutsche Beschreibung via OpenAI
                     $rewrittenDesc = $openAiService->rewriteDescription(
-                        $mapped['title'],
+                        $mapped['title'], 
                         $mapped['description']
                     );
 
-                    if (!$existingProduct) {
-                        // Neuanlage
+                    if (!$existing) {
+                        // Neuerstellung
                         $manufacturerId = $shopwareService->findOrCreateManufacturer($mapped['manufacturer']);
 
-                        // Kategorie via OpenAI
+                        // Kategory via OpenAI
+                        // Falls leer => fallback?
                         $categoryId = null;
-                        if (!empty($mapped['categoryHint']) && !empty($mapped['description'])) {
+                        if (!empty($mapped['categoryHint'])) {
                             $bestCatName = $openAiService->bestCategory(
                                 $mapped['title'],
                                 $mapped['description'],
@@ -114,8 +114,14 @@ class SyncCommand extends Command
                                 $categoryId = $categoryMap[$bestCatName];
                             }
                         }
+                        // Falls wir zwingend eine Kategorie brauchen, setze fallback
+                        if (empty($categoryId)) {
+                            // z.B. default-Kategorie:
+                            // $categoryId = 'SOME-DEFAULT-CATEGORY-ID';
+                            // oder ein leeres Array => createProduct(...) => 'categories' => []
+                        }
 
-                        // Lieferzeit
+                        // Delivery Time
                         $deliveryTimeId = null;
                         if (!empty($mapped['deliveryTimeCsv'])) {
                             $bestDtName = $openAiService->bestDeliveryTime(
@@ -127,32 +133,32 @@ class SyncCommand extends Command
                             }
                         }
 
-                        // Preise
+                        // Price
                         $priceBrutto = floatval(str_replace(',', '.', $mapped['priceBrutto']));
                         $listPrice   = floatval(str_replace(',', '.', $mapped['listPrice']));
 
-                        // Bilder hochladen
+                        // Bilder
                         $imageIds = $shopwareService->uploadImages([$mapped['imageUrl']]);
 
-                        // Produkt-Payload
+                        // Erzeuge finalen payload
                         $newProductPayload = [
-                            // ID von Shopware generieren lassen oder
-                            // 'id' => UuidService::generate(),
+                            'id'            => UuidService::generate(), // ^[0-9a-f]{32}$
                             'name'          => $mapped['title'],
                             'productNumber' => $mapped['productNumber'],
                             'stock'         => 9999,
                             'description'   => $rewrittenDesc,
                             'ean'           => $mapped['ean'],
                             'manufacturerId'=> $manufacturerId,
+                            // taxId kommt in ShopwareService->createProduct automatisch
                             'price' => [[
-                                'currencyId' => 'b7d2554b0ce847cd82f3ac9bd1c0dfca', // EUR
+                                'currencyId' => 'b7d2554b0ce847cd82f3ac9bd1c0dfca', 
                                 'gross'      => $priceBrutto,
                                 'net'        => ($priceBrutto / 1.19),
                                 'linked'     => false,
                             ]],
                             'active' => true,
                             'customFields' => [
-                                'real_productlink' => $mapped['deeplink']        ?? '',
+                                'real_productlink' => $deeplink,
                                 'shipping_general' => $mapped['shippingGeneral'] ?? '',
                             ],
                         ];
@@ -167,36 +173,41 @@ class SyncCommand extends Command
 
                         if ($categoryId) {
                             $newProductPayload['categories'] = [[ 'id' => $categoryId ]];
+                        } else {
+                            // ensure at least an empty array
+                            $newProductPayload['categories'] = [];
                         }
 
                         if ($deliveryTimeId) {
                             $newProductPayload['deliveryTimeId'] = $deliveryTimeId;
                         }
 
+                        // Bilder -> cover
                         if (!empty($imageIds)) {
                             $newProductPayload['media'] = [];
                             foreach ($imageIds as $pos => $mid) {
                                 $newProductPayload['media'][] = [
                                     'mediaId'   => $mid,
                                     'position'  => $pos,
-                                    'cover'     => ($pos === 0), // erstes Bild als Cover
+                                    'cover'     => ($pos === 0),
                                     'highlight' => ($pos === 0),
                                 ];
                             }
                         }
 
-                        // Anlegen in Shopware
+                        // Erstelle Produkt
                         if ($shopwareService->createProduct($newProductPayload)) {
-                            $logger->info("Produkt [{$mapped['title']}] erstellt.");
+                            $logger->info("Produkt [{$mapped['title']}] angelegt.");
                             $createdCount++;
                         } else {
-                            $logger->warning("Erstellen des Produkts [{$mapped['title']}] fehlgeschlagen.");
+                            $logger->warning("Fehler beim Erstellen des Produkts [{$mapped['title']}]");
                             $skippedCount++;
                         }
 
                     } else {
                         // Update
-                        $existingId = $existingProduct['id'];
+                        $existingId = $existing['id'];
+
                         $priceBrutto = floatval(str_replace(',', '.', $mapped['priceBrutto']));
                         $listPrice   = floatval(str_replace(',', '.', $mapped['listPrice']));
 
@@ -209,7 +220,7 @@ class SyncCommand extends Command
                                 'linked'     => false,
                             ]],
                             'customFields' => [
-                                'real_productlink' => $mapped['deeplink']        ?? '',
+                                'real_productlink' => $deeplink,
                                 'shipping_general' => $mapped['shippingGeneral'] ?? '',
                             ],
                         ];
@@ -221,20 +232,20 @@ class SyncCommand extends Command
                                 'linked' => false,
                             ];
                         }
-
-                        // Man könnte noch Lieferzeit etc. updaten, je nach Wunsch
+                        // optional: update deliveryTimeId => ...
+                        
                         if ($shopwareService->updateProduct($existingId, $updatePayload)) {
                             $logger->info("Produkt [{$mapped['title']}] aktualisiert.");
                             $updatedCount++;
                         } else {
-                            $logger->warning("Update des Produkts [{$mapped['title']}] fehlgeschlagen.");
+                            $logger->warning("Fehler beim Update des Produkts [{$mapped['title']}]");
                             $skippedCount++;
                         }
                     }
                 } // foreach row
 
-                $logger->info("CSV '{$csvId}' fertig. Created={$createdCount}, Updated={$updatedCount}, Skipped={$skippedCount}");
-            }
+                $logger->info("CSV '{$csvId}' abgeschlossen. Created=$createdCount, Updated=$updatedCount, Skipped=$skippedCount");
+            } // foreach csv
 
         } catch (\Throwable $e) {
             $logger->error("Sync-Fehler: {$e->getMessage()}");
