@@ -8,10 +8,6 @@ Dieses Projekt dient dazu, **CSV-Dateien** (über ENV-Variablen konfiguriert) in
   - Falls **kein** Streichpreis vorhanden: `price = Bruttopreis`, kein `listPrice`.  
   - Falls **Streichpreis** vorhanden: `price = Streichpreis`, `listPrice = Bruttopreis`.  
 - **Cover-Bild** in nur **einem** Aufruf gesetzt (kein zweiter PATCH-Call nötig), durch:
-  ```php
-  $payload['cover'] = [ 'mediaId' => $mediaIds[0] ];
-  $payload['media'] = array_map(fn($id) => ['mediaId' => $id], $mediaIds);
-  ```
 - Ein **Re-Write** der Produktbeschreibung via **OpenAI** auf Deutsch, ohne Wiederholen des Titels, mit dem Endpunkt `/v1/chat/completions`.
 
 ## Features
