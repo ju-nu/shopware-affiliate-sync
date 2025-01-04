@@ -1,15 +1,15 @@
-# Ignore environment files
+# Composer vendor
+/vendor/
+
+# Environment files
 .env
 .env.local
 .env.*.local
 
-# Ignore log files
+# Log files
 logs/
 *.log
 
-# Ignore vendor if using Composer
-vendor/
-
-# Mac / Windows OS files
+# OS / Editor files
 .DS_Store
 Thumbs.db
