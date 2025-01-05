@@ -109,7 +109,7 @@ OPENAI_MODEL="gpt-4o-mini"
 # CSV 1
 CSV_URL_1="https://example.com/file1.csv"
 CSV_ID_1="CSV1"
-CSV_MAPPING_1="Deeplink=Produkt-Deeplink|Streich=X"
+CSV_MAPPING_1="Streich=X|StreichC=Y"
 
 CSV_DEFAULT_MANUFACTURER_1="HerstellerFuerCSV1"
 ```

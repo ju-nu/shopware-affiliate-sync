@@ -12,7 +12,7 @@ class CsvRowMapper
 {
     public static function mapRow(array $row, string $csvId): array
     {
-        $deeplink        = $row['Produkt-Deeplink']        ?? '';
+        $deeplink        = $row['Deeplink']        ?? '';
         $title           = $row['Produkt-Titel']           ?? '';
         $description     = $row['Produktbeschreibung']     ?? '';
         $descriptionLang = $row['Produktbeschreibung lang'] ?? '';

@@ -51,7 +51,7 @@ class CsvService
         // so we can quickly do data[headerName] = colValue
         $headerIndex = [];
         foreach ($headers as $idx => $hName) {
-            $headerIndex[$hName] = $idx; // e.g. $headerIndex["Produkt-Deeplink"] = 0
+            $headerIndex[$hName] = $idx; // e.g. $headerIndex["Deeplink"] = 0
         }
 
         // Parse column mappings
@@ -70,7 +70,7 @@ class CsvService
         // Define the "must-have" columns
         // If they are missing in the final row, we'll set them to ""
         $mustHaveCols = [
-            "Produkt-Deeplink",
+            "Deeplink",
             "Produkt-Titel",
             "Produktbeschreibung",
             "Bruttopreis",

@@ -8,17 +8,6 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Log\LoggerInterface;
 use JUNU\RealADCELL\Service\UuidService;
 
-/**
- * ShopwareService
- * ---------------
- * - Authenticates with Shopware Admin API
- * - Loads category tree => flatten "Parent > Child" => catId
- * - Finds default tax where position=1
- * - Loads a sales channel from .env
- * - Creates/updates products in a single call (cover => [ 'mediaId' => ... ])
- * - Manufacturer searching via POST /api/search/product-manufacturer
- *   => no duplicates if the CSV has consistent name
- */
 class ShopwareService
 {
     private Client $client;
@@ -29,12 +18,14 @@ class ShopwareService
     private string $clientSecret;
     private ?string $token = null;
 
+    /**
+     * Store token expiration time (Unix timestamp).
+     */
+    private ?int $tokenExpiresAt = null;
+
     private ?string $salesChannelId = null;
     private ?string $defaultTaxId   = null;
 
-    /**
-     * Local static cache for manufacturer name => ID
-     */
     private static array $manufacturerCache = [];
 
     // raw category data => build tree => flatten
@@ -54,9 +45,12 @@ class ShopwareService
         ]);
     }
 
+    /**
+     * Before returning default headers, ensure the token is valid.
+     */
     private function getDefaultHeaders(): array
     {
-        if (!$this->token) {
+        if ($this->token === null || $this->isTokenExpired()) {
             $this->authenticate();
         }
         return [
@@ -67,7 +61,20 @@ class ShopwareService
     }
 
     /**
-     * authenticate => sets $this->token
+     * Checks if the current token is expired or close to expiry.
+     * You can adjust the "buffer" (30 seconds here) as you prefer.
+     */
+    private function isTokenExpired(): bool
+    {
+        if ($this->tokenExpiresAt === null) {
+            return true; // no expiry time known => treat as expired
+        }
+        // If we are within 30 seconds of token expiration, treat as expired
+        return (time() >= ($this->tokenExpiresAt - 30));
+    }
+
+    /**
+     * authenticate => sets $this->token and $this->tokenExpiresAt
      * also fetches salesChannelId and defaultTaxId
      */
     public function authenticate(): void
@@ -85,11 +92,25 @@ class ShopwareService
                 ],
             ]);
             $data = json_decode((string)$resp->getBody(), true);
+
             $this->token = $data['access_token'] ?? null;
+
+            // Usually Shopware returns an "expires_in" (3600 seconds, for example).
+            // If not provided, default to 3600 seconds for safety.
+            $expiresInSeconds = $data['expires_in'] ?? 3600;
+            $this->tokenExpiresAt = time() + $expiresInSeconds;
+
             if (!$this->token) {
                 throw new \RuntimeException("No token in authentication response.");
             }
-            $this->logger->info("Shopware authentication succeeded.");
+
+            $this->logger->info(
+                sprintf(
+                    "Shopware authentication succeeded. Token expires in %d seconds (at %s).",
+                    $expiresInSeconds,
+                    date('Y-m-d H:i:s', $this->tokenExpiresAt)
+                )
+            );
 
             $this->fetchSalesChannelId();
             $this->fetchDefaultTaxId();
@@ -127,9 +148,6 @@ class ShopwareService
         }
     }
 
-    /**
-     * fetchDefaultTaxId => find tax with position=1
-     */
     private function fetchDefaultTaxId(): void
     {
         $this->defaultTaxId = null;
@@ -159,7 +177,6 @@ class ShopwareService
             } else {
                 $this->logger->warning("No tax entry found with position=1 in /api/tax.");
             }
-
         } catch (GuzzleException $e) {
             $this->logger->error("fetchDefaultTaxId error: " . $e->getMessage());
         }
@@ -215,7 +232,9 @@ class ShopwareService
                     break;
                 }
                 $page++;
-                if ($page > 20) break;
+                if ($page > 20) {
+                    break;
+                }
 
             } catch (GuzzleException $e) {
                 $this->logger->error("getAllCategories page=$page error: " . $e->getMessage());
@@ -304,7 +323,9 @@ class ShopwareService
                     break;
                 }
                 $page++;
-                if ($page > 20) break;
+                if ($page > 20) {
+                    break;
+                }
 
             } catch (GuzzleException $e) {
                 $this->logger->error("getAllDeliveryTimes p=$page error: " . $e->getMessage());
@@ -328,11 +349,6 @@ class ShopwareService
         return $this->findOrCreateManufacturer($name);
     }
 
-    /**
-     * 1) Check local static cache
-     * 2) findManufacturerByName($name) => POST /api/search/product-manufacturer
-     * 3) If not found => POST /api/product-manufacturer => create new
-     */
     public function findOrCreateManufacturer(string $name): ?string
     {
         $name = trim($name);
@@ -377,13 +393,6 @@ class ShopwareService
         }
     }
 
-    /**
-     * findManufacturerByName => POST /api/search/product-manufacturer
-     * {
-     *   "filter": [ { "field":"product_manufacturer.name", "type":"equals", "value":"Acme" } ],
-     *   "limit":1
-     * }
-     */
     private function findManufacturerByName(string $name): ?string
     {
         try {
@@ -461,8 +470,6 @@ class ShopwareService
                 'visibility'     => 30, 
             ]];
         }
-
-        // We let the user set cover => [ 'mediaId' => ... ] if needed
 
         try {
             $resp = $this->client->post('/api/product', [
