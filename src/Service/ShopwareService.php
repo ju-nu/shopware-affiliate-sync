@@ -563,6 +563,13 @@ final class ShopwareService
      */
     public function findMediaByFilename(string $fileNameWithoutExt): ?string
     {
+        $fileNameWithoutExt = urldecode($fileNameWithoutExt);
+        $fileNameWithoutExt = preg_replace('/[^\w.\-]+/', '_', $fileNameWithoutExt);
+        $fileNameWithoutExt = trim($fileNameWithoutExt, '_');
+        if (empty($fileNameWithoutExt)) {
+            return null;
+        }
+        
         try {
             $resp = $this->client->get('/api/media', [
                 'headers' => $this->getDefaultHeaders(),
