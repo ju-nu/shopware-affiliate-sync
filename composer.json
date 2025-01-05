@@ -1,6 +1,6 @@
 {
-  "name": "junu/realadcell-sync",
-  "description": "A real-world example of syncing CSV products to Shopware 6.6, using OpenAI, ramsey/uuid, and Symfony Console.",
+  "name": "junu/shopware-affiliate-sync",
+  "description": "Automatisierte Synchronisation von Affiliate-Produktdaten in Shopware.",
   "type": "project",
   "require": {
     "php": "^8.3",
@@ -12,7 +12,7 @@
   },
   "autoload": {
     "psr-4": {
-      "JUNU\\RealADCELL\\": "src/"
+      "JUNU\\ShopwareAffiliateSync\\": "src/"
     }
   },
   "scripts": {

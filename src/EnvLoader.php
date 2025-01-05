@@ -6,7 +6,7 @@
  * Zweck:    Lädt Umgebungsvariablen aus einer .env Datei.
  */
 
-namespace JUNU\RealADCELL;
+namespace JUNU\ShopwareAffiliateSync;
 
 use Dotenv\Dotenv;
 use Dotenv\Exception\InvalidPathException;

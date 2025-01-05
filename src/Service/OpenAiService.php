@@ -6,7 +6,7 @@
  * Zweck:    Service-Klasse zur Kommunikation mit OpenAI (ChatGPT).
  */
 
-namespace JUNU\RealADCELL\Service;
+namespace JUNU\ShopwareAffiliateSync\Service;
 
 use GuzzleHttp\Client;
 use Psr\Log\LoggerInterface;

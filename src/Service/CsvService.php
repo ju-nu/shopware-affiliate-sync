@@ -6,7 +6,7 @@
  * Zweck:    Service-Klasse zum Einlesen und Parsen von CSV-Dateien.
  */
 
-namespace JUNU\RealADCELL\Service;
+namespace JUNU\ShopwareAffiliateSync\Service;
 
 use Psr\Log\LoggerInterface;
 

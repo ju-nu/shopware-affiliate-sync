@@ -6,7 +6,7 @@
  * Zweck:    Utility-Klasse zum Mapping einer CSV-Zeile auf die Felder eines Shopware-Produkts.
  */
 
-namespace JUNU\RealADCELL\Utils;
+namespace JUNU\ShopwareAffiliateSync\Utils;
 
 final class CsvRowMapper
 {

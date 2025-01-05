@@ -6,7 +6,7 @@
  * Zweck:    Generiert 32-stellige UUIDs (ohne Bindestriche) auf Basis von ramsey/uuid.
  */
 
-namespace JUNU\RealADCELL\Service;
+namespace JUNU\ShopwareAffiliateSync\Service;
 
 use Ramsey\Uuid\Uuid;
 

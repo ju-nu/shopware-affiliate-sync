@@ -6,7 +6,7 @@
  * Zweck:    Erzeugt Monolog-Logger mit File- und Console-Handler.
  */
 
-namespace JUNU\RealADCELL;
+namespace JUNU\ShopwareAffiliateSync;
 
 use Monolog\Logger;
 use Monolog\Handler\StreamHandler;

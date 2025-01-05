@@ -6,13 +6,13 @@
  * Zweck:    Definiert den Konsolenbefehl zum CSV->Shopware-Sync.
  */
 
-namespace JUNU\RealADCELL\Commands;
+namespace JUNU\ShopwareAffiliateSync\Commands;
 
-use JUNU\RealADCELL\LoggerFactory;
-use JUNU\RealADCELL\Service\CsvService;
-use JUNU\RealADCELL\Service\OpenAiService;
-use JUNU\RealADCELL\Service\ShopwareService;
-use JUNU\RealADCELL\Utils\CsvRowMapper;
+use JUNU\ShopwareAffiliateSync\LoggerFactory;
+use JUNU\ShopwareAffiliateSync\Service\CsvService;
+use JUNU\ShopwareAffiliateSync\Service\OpenAiService;
+use JUNU\ShopwareAffiliateSync\Service\ShopwareService;
+use JUNU\ShopwareAffiliateSync\Utils\CsvRowMapper;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;

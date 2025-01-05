@@ -6,7 +6,7 @@
  * Zweck:    Service-Klasse für Aufrufe gegen die Shopware-API.
  */
 
-namespace JUNU\RealADCELL\Service;
+namespace JUNU\ShopwareAffiliateSync\Service;
 
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;

@@ -10,8 +10,8 @@
 require __DIR__ . '/../vendor/autoload.php';
 
 use Symfony\Component\Console\Application;
-use JUNU\RealADCELL\EnvLoader;
-use JUNU\RealADCELL\Commands\SyncCommand;
+use JUNU\ShopwareAffiliateSync\EnvLoader;
+use JUNU\ShopwareAffiliateSync\Commands\SyncCommand;
 
 // 1) ENV-Variablen laden
 EnvLoader::loadEnv(__DIR__ . '/../');
