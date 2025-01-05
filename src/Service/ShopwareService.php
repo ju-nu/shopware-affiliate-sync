@@ -567,10 +567,9 @@ final class ShopwareService
         $fileNameWithoutExt = preg_replace('/[^\w.\-]+/', '_', $fileNameWithoutExt);
         $fileNameWithoutExt = trim($fileNameWithoutExt, '_');
         if (empty($fileNameWithoutExt)) {
-            return null;
+            return false;
         }
-        echo $fileNameWithoutExt;
-
+        
         try {
             $resp = $this->client->get('/api/media', [
                 'headers' => $this->getDefaultHeaders(),
@@ -620,45 +619,34 @@ final class ShopwareService
      */
     public function uploadImageFromUrl(string $mediaId, string $imageUrl, string $fileNameWithoutExt): bool
     {
+        $fileNameWithoutExt = urldecode($fileNameWithoutExt);
+        $fileNameWithoutExt = preg_replace('/[^\w.\-]+/', '_', $fileNameWithoutExt);
+        $fileNameWithoutExt = trim($fileNameWithoutExt, '_');
+        if (empty($fileNameWithoutExt)) {
+            return false;
+        }
+
         try {
-            // 1) Zuerst das evtl. doppelt kodierte "Roh"-Snippet dekodieren
-            $safeBaseName = urldecode($fileNameWithoutExt);
-    
-            // 2) Alle Zeichen entfernen, die nicht alphanumerisch, Punkt, Minus oder Unterstrich sind
-            $safeBaseName = preg_replace('/[^\w.\-]+/', '_', $safeBaseName);
-    
-            // 3) Überflüssige Unterstriche am Anfang/Ende entfernen
-            $safeBaseName = trim($safeBaseName, '_');
-    
-            // 4) Falls nach dem Säubern nichts übrig bleibt => False
-            if (empty($safeBaseName)) {
-                return false;
-            }
-    
-            // 5) Jetzt *einmal* korrekt encodieren
-            $encodedName = urlencode($safeBaseName);
-    
-            // 6) Upload-URL zusammensetzen
-            $uploadUrl = "/api/_action/media/{$mediaId}/upload?fileName={$encodedName}";
-    
-            // Request an Shopware
+            $uploadUrl = "/api/_action/media/{$mediaId}/upload?fileName=" . \urlencode($fileNameWithoutExt);
+
             $resp = $this->client->post($uploadUrl, [
                 'headers' => $this->getDefaultHeaders(),
-                'json'    => [ 'url' => $imageUrl ],
+                'json'    => [
+                    'url' => $imageUrl,
+                ],
             ]);
-    
             if ($resp->getStatusCode() !== 204) {
                 $body = $resp->getBody()->getContents();
                 $this->logger->error("uploadImageFromUrl Fehler: $body");
                 return false;
             }
-    
             return true;
         } catch (GuzzleException $e) {
             $this->logger->error("uploadImageFromUrl Fehler: " . $e->getMessage());
             return false;
         }
-    }    
+    }
+    
 
     /**
      * Lädt mehrere Bilder hoch und gibt die Media-IDs zurück.
