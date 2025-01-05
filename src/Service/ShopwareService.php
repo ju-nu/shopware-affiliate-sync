@@ -563,12 +563,13 @@ final class ShopwareService
      */
     public function findMediaByFilename(string $fileNameWithoutExt): ?string
     {
-        $fileNameWithoutExt = urldecode($fileNameWithoutExt);
-        $fileNameWithoutExt = preg_replace('/[^\w.\-]+/', '_', $fileNameWithoutExt);
-        $fileNameWithoutExt = trim($fileNameWithoutExt, '_');
-        if (empty($fileNameWithoutExt)) {
+
+        $fileNameWithoutExt = $this->cleanFilename($fileNameWithoutExt);
+
+        if ($fileNameWithoutExt === null) {
             return null;
         }
+
         
         try {
             $resp = $this->client->get('/api/media', [
@@ -585,6 +586,15 @@ final class ShopwareService
             return null;
         }
     }
+
+    private function cleanFilename(string $name): ?string
+    {
+        $name = urldecode($name);
+        $name = preg_replace('/[^\w.\-]+/', '_', $name);
+        $name = trim($name, '_');
+    
+        return empty($name) ? null : $name;
+    }    
 
     /**
      * Erstellt ein leeres Media-Objekt in Shopware.
@@ -619,10 +629,9 @@ final class ShopwareService
      */
     public function uploadImageFromUrl(string $mediaId, string $imageUrl, string $fileNameWithoutExt): bool
     {
-        $fileNameWithoutExt = urldecode($fileNameWithoutExt);
-        $fileNameWithoutExt = preg_replace('/[^\w.\-]+/', '_', $fileNameWithoutExt);
-        $fileNameWithoutExt = trim($fileNameWithoutExt, '_');
-        if (empty($fileNameWithoutExt)) {
+        $fileNameWithoutExt = $this->cleanFilename($fileNameWithoutExt);
+
+        if ($fileNameWithoutExt === null) {
             return false;
         }
 
