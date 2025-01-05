@@ -32,6 +32,11 @@ final class LoggerFactory
 
         // File Handler
         $logFilePath = $_ENV['LOG_FILE'] ?? 'logs/app.log';
+
+        if (file_exists($logFilePath)) {
+            @unlink($logFilePath);
+        }
+        
         $fileHandler = new StreamHandler($logFilePath, Logger::DEBUG);
         $fileHandler->setFormatter($formatter);
         $logger->pushHandler($fileHandler);

@@ -622,9 +622,9 @@ final class ShopwareService
             // 3) Überflüssige Unterstriche am Anfang/Ende entfernen
             $safeBaseName = trim($safeBaseName, '_');
     
-            // 4) Falls nach dem Säubern nichts übrig bleibt => Fallback
+            // 4) Falls nach dem Säubern nichts übrig bleibt => False
             if (empty($safeBaseName)) {
-                $safeBaseName = 'image';
+                return false;
             }
     
             // 5) Jetzt *einmal* korrekt encodieren
