@@ -569,7 +569,8 @@ final class ShopwareService
         if (empty($fileNameWithoutExt)) {
             return null;
         }
-        
+        echo $fileNameWithoutExt;
+
         try {
             $resp = $this->client->get('/api/media', [
                 'headers' => $this->getDefaultHeaders(),
