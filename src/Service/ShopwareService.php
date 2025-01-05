@@ -558,6 +558,16 @@ final class ShopwareService
     // ----------------------------------------------------------------
     // MEDIA
     // ----------------------------------------------------------------
+
+    private function cleanFilename(string $name): ?string
+    {
+        $name = urldecode($name);
+        $name = preg_replace('/[^\w.\-]+/', '_', $name);
+        $name = trim($name, '_');
+    
+        return empty($name) ? null : $name;
+    }    
+    
     /**
      * Sucht eine Media-ID anhand des Dateinamens (ohne Extension).
      */
@@ -586,15 +596,6 @@ final class ShopwareService
             return null;
         }
     }
-
-    private function cleanFilename(string $name): ?string
-    {
-        $name = urldecode($name);
-        $name = preg_replace('/[^\w.\-]+/', '_', $name);
-        $name = trim($name, '_');
-    
-        return empty($name) ? null : $name;
-    }    
 
     /**
      * Erstellt ein leeres Media-Objekt in Shopware.
