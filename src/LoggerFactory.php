@@ -28,7 +28,7 @@ final class LoggerFactory
         $formatter = new LineFormatter($outputFormat, $dateFormat, false, true);
         
         // Wichtig, um Umlaute nicht als \uXXXX zu escapen und Sonderzeichen beizubehalten
-        $formatter->setJsonEncodeOptions(JSON_UNESCAPED_UNICODE);
+        //$formatter->setJsonEncodeOptions(JSON_UNESCAPED_UNICODE);
 
         // File Handler
         $logFilePath = $_ENV['LOG_FILE'] ?? 'logs/app.log';
