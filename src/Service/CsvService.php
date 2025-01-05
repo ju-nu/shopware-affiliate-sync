@@ -107,14 +107,15 @@ class CsvService
                 $data[$hdrName] = isset($cols[$hdrIndex]) ? $cols[$hdrIndex] : '';
             }
 
-            // Apply the "mapping" fallback. If the target column is empty, copy from the source
             foreach ($columnMappings as $fromCol => $toCol) {
                 if (isset($data[$fromCol]) && isset($data[$toCol])) {
-                    if (empty($data[$toCol]) && !empty($data[$fromCol])) {
+                    // As long as $fromCol is not empty, overwrite the value in $toCol
+                    if (!empty($data[$fromCol])) {
                         $data[$toCol] = $data[$fromCol];
                     }
                 }
-            }
+            }            
+            
 
             $rows[] = $data;
         }

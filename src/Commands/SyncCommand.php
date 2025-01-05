@@ -106,30 +106,24 @@ class SyncCommand extends Command
                         $mapped['manufacturer']
                     );
 
-                    // Price logic:
-                    // if no Streichpreis => price=Bruttopreis; listPrice empty
-                    // if Streichpreis => price=Streich, listPrice=Brutto
+                    // Bruttopreis ist immer actualPrice
+                    // Streichpreis, falls vorhanden, wird zum listPrice
+
                     $brutto       = floatval(str_replace(',', '.', $mapped['priceBrutto']));
                     $streichpreis = floatval(str_replace(',', '.', $mapped['listPrice']));
 
-                    // Default (no discount)
+                    // Standardwerte
                     $actualPrice = $brutto;
-                    $listPrice   = 0.0;
-                    if ($streichpreis > 0) {
-                        // If we have a streichpreis => that is the actual price
-                        // brutto => becomes listPrice
-                        $actualPrice = $streichpreis;
-                        $listPrice   = $brutto;
-                    }
-
-                    // Upload images => returns array of media IDs
-                    $mediaIds = $shopwareService->uploadImages([$mapped['imageUrl']]);
+                    $listPrice   = $streichpreis > 0 ? $streichpreis : 0.0;
 
                     // Check if product exists (by productNumber)
                     $existing = $shopwareService->findProductByNumber($mapped['productNumber']);
 
                     if (!$existing) {
                         // --- CREATE NEW PRODUCT (ChatGPT calls allowed) ---
+
+                        // Upload images => returns array of media IDs
+                        $mediaIds = $shopwareService->uploadImages([$mapped['imageUrl']]);
 
                         // Category => only for new products
                         $catId = null;
@@ -187,13 +181,16 @@ class SyncCommand extends Command
                         if (!empty($mapped['aan'])) {
                             $payload['manufacturerNumber'] = $mapped['aan'];
                         }
-
-                        if ($streichpreis > 0) {
+                        
+                        if ($listPrice > 0) {
                             $payload['price'][0]['listPrice'] = [
                                 'gross'  => $listPrice,
                                 'net'    => ($listPrice / 1.19),
                                 'linked' => false,
                             ];
+                        }
+                        else {
+                            $payload['price'][0]['listPrice'] = null;
                         }
 
                         if ($deliveryTimeId) {
@@ -239,14 +236,16 @@ class SyncCommand extends Command
                                 'linked'     => false,
                             ]],
                         ];
-                        if ($streichpreis > 0) {
+                        if ($listPrice > 0) {
                             $updatePayload['price'][0]['listPrice'] = [
-                                'gross'  => $brutto,  
-                                'net'    => ($brutto / 1.19),
+                                'gross'  => $listPrice,
+                                'net'    => ($listPrice / 1.19),
                                 'linked' => false,
                             ];
                         }
-
+                        else {
+                            $updatePayload['price'][0]['listPrice'] = null;
+                        }
                         // custom fields
                         $cfDeeplink = $_ENV['SHOPWARE_CUSTOMFIELD_DEEPLINK'] ?? 'real_productlink';
                         $cfShipping = $_ENV['SHOPWARE_CUSTOMFIELD_SHIPPING_GENERAL'] ?? 'shipping_general';
