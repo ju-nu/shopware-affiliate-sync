@@ -1,44 +1,52 @@
 <?php
+/**
+ * Autor:    Sebastian Gräbner (sebastian@ju.nu)
+ * Firma:    JUNU Marketing Group LTD
+ * Datum:    2025-01-05
+ * Zweck:    Utility-Klasse zum Mapping einer CSV-Zeile auf die Felder eines Shopware-Produkts.
+ */
 
 namespace JUNU\RealADCELL\Utils;
 
-/**
- * Class CsvRowMapper
- * Updated logic so productNumber is always "CSV_ID + AAN" if AAN is present;
- * otherwise "CSV_ID + EAN" if EAN is present.
- * We remove the product title from the 'description' field; only keep CSV description.
- */
-class CsvRowMapper
+final class CsvRowMapper
 {
+    /**
+     * Mappt eine CSV-Zeile auf ein vereinheitlichtes Array.
+     *
+     * Regel für productNumber:
+     *  - Falls AAN vorhanden => "CSV_ID-AAN"
+     *  - Ansonsten, falls EAN vorhanden => "CSV_ID-EAN"
+     *  - Ansonsten leer
+     *
+     * @param array  $row   Die CSV-Zeile
+     * @param string $csvId Kennung der CSV
+     */
     public static function mapRow(array $row, string $csvId): array
     {
         $deeplink        = $row['Deeplink']        ?? '';
-        $title           = $row['Produkt-Titel']           ?? '';
-        $description     = $row['Produktbeschreibung']     ?? '';
+        $title           = $row['Produkt-Titel']   ?? '';
+        $description     = $row['Produktbeschreibung'] ?? '';
         $descriptionLang = $row['Produktbeschreibung lang'] ?? '';
-        $bruttopreis     = $row['Preis (Brutto)']          ?? '';
-        $streichpreis    = $row['Streichpreis']            ?? '';
+        $bruttopreis     = $row['Preis (Brutto)']  ?? '';
+        $streichpreis    = $row['Streichpreis']    ?? '';
         $ean             = $row['europäische Artikelnummer EAN'] ?? '';
         $aan             = $row['Anbieter Artikelnummer AAN']    ?? '';
-        $manufacturer    = $row['Hersteller']              ?? '';
-        $mainImage       = $row['Produktbild-URL']         ?? '';
-        $fallbackImage   = $row['Vorschaubild-URL']        ?? '';
-        $categoryHint    = $row['Produktkategorie']        ?? '';
+        $manufacturer    = $row['Hersteller']      ?? '';
+        $mainImage       = $row['Produktbild-URL'] ?? '';
+        $fallbackImage   = $row['Vorschaubild-URL']?? '';
+        $categoryHint    = $row['Produktkategorie']?? '';
         $shippingGeneral = $row['Versandkosten Allgemein'] ?? '';
-        $lieferzeit      = $row['Lieferzeit']              ?? '';
+        $lieferzeit      = $row['Lieferzeit']      ?? '';
 
-        // If "Produktbeschreibung" empty, fallback to "lang"
+        // Fallback auf "Produktbeschreibung lang"
         if (empty($description)) {
             $description = $descriptionLang;
         }
 
-        // Use mainImage if available, else fallback
-        $imageUrl = $mainImage ?: $fallbackImage;
+        // Wähle das beste Bild
+        $imageUrl = !empty($mainImage) ? $mainImage : $fallbackImage;
 
-        // PRODUCT NUMBER RULE:
-        //  - If AAN present => CSV_ID + AAN
-        //  - else if EAN present => CSV_ID + EAN
-        //  - else empty
+        // productNumber zusammenbauen
         $productNumber = '';
         if (!empty($aan)) {
             $productNumber = $csvId . '-' . $aan;
@@ -48,8 +56,8 @@ class CsvRowMapper
 
         return [
             'deeplink'         => $deeplink,
-            'title'            => $title,         // We'll keep the title if needed
-            'description'      => $description,   // We'll rewrite it in German via OpenAI (no title included!)
+            'title'            => $title,
+            'description'      => $description,
             'priceBrutto'      => $bruttopreis,
             'listPrice'        => $streichpreis,
             'ean'              => $ean,

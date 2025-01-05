@@ -1,22 +1,21 @@
 {
-    "name": "junu/realadcell-sync",
-    "description": "A real-world example of syncing CSV products to Shopware 6.6, using OpenAI, ramsey/uuid, and Symfony Console.",
-    "type": "project",
-    "require": {
-      "php": "^7.4 || ^8.0",
-      "guzzlehttp/guzzle": "^7.0",
-      "monolog/monolog": "^2.0",
-      "symfony/console": "^5.4 || ^6.0",
-      "vlucas/phpdotenv": "^5.5",
-      "ramsey/uuid": "^4.0"
-    },
-    "autoload": {
-      "psr-4": {
-        "JUNU\\RealADCELL\\": "src/"
-      }
-    },
-    "scripts": {
-      "start": "php bin/console sync"
+  "name": "junu/realadcell-sync",
+  "description": "A real-world example of syncing CSV products to Shopware 6.6, using OpenAI, ramsey/uuid, and Symfony Console.",
+  "type": "project",
+  "require": {
+    "php": "^8.3",
+    "guzzlehttp/guzzle": "^7.0",
+    "monolog/monolog": "^2.0",
+    "symfony/console": "^6.0",
+    "vlucas/phpdotenv": "^5.5",
+    "ramsey/uuid": "^4.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "JUNU\\RealADCELL\\": "src/"
     }
+  },
+  "scripts": {
+    "start": "php bin/console sync"
   }
-  
+}

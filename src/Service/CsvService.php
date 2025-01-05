@@ -1,74 +1,88 @@
 <?php
+/**
+ * Autor:    Sebastian Gräbner (sebastian@ju.nu)
+ * Firma:    JUNU Marketing Group LTD
+ * Datum:    2025-01-05
+ * Zweck:    Service-Klasse zum Einlesen und Parsen von CSV-Dateien.
+ */
 
 namespace JUNU\RealADCELL\Service;
 
 use Psr\Log\LoggerInterface;
 
-class CsvService
+final class CsvService
 {
+    /**
+     * LoggerInterface zum Protokollieren von Informationen und Fehlern.
+     */
     private LoggerInterface $logger;
 
+    /**
+     * Konstruktor
+     *
+     * @param LoggerInterface $logger Logger zur Ausgabe von Logmeldungen
+     */
     public function __construct(LoggerInterface $logger)
     {
         $this->logger = $logger;
     }
 
     /**
-     * Download and parse a semicolon-separated CSV,
-     * then enforce that certain "must-have" columns always exist in the parsed rows.
+     * Lädt eine semikolon-getrennte CSV-Datei, parst sie und garantiert bestimmte Spalten.
      *
-     * @param string $csvUrl      The URL of the CSV
-     * @param string $csvMapping  e.g. "ext_Foo=Foo|ext_Bar=Bar"
-     * @return array              An array of associative rows
+     * @param string $csvUrl      URL zur CSV-Datei
+     * @param string $csvMapping  z.B. "ext_Foo=Foo|ext_Bar=Bar"
+     *
+     * @return array Ein Array assoziativer Arrays (Zeilen).
      */
     public function fetchAndParseCsv(string $csvUrl, string $csvMapping): array
     {
         if (empty($csvUrl)) {
-            $this->logger->error("CSV URL is empty. Skipping.");
+            $this->logger->error("CSV-URL ist leer. Überspringe.");
             return [];
         }
 
-        $this->logger->info("Fetching CSV from: {$csvUrl}");
+        $this->logger->info("Lade CSV von: {$csvUrl}");
 
-        $content = @file_get_contents($csvUrl);
+        $content = @\file_get_contents($csvUrl);
         if ($content === false) {
-            $this->logger->error("Failed to download CSV from {$csvUrl}");
+            $this->logger->error("CSV-Download fehlgeschlagen von {$csvUrl}");
             return [];
         }
 
-        // Break into lines
-        $lines = str_getcsv($content, "\n");
-        if (count($lines) < 2) {
-            $this->logger->error("CSV from {$csvUrl} seems to have no data.");
+        // In Zeilen aufspalten
+        $lines = \str_getcsv($content, "\n");
+        if (\count($lines) < 2) {
+            $this->logger->error("Die CSV unter {$csvUrl} enthält zu wenige Zeilen.");
             return [];
         }
 
-        // Parse headers
-        $headers = str_getcsv(array_shift($lines), ';', '"');
-        $headers = array_map('trim', $headers);
+        // Header parsen
+        $headers = \str_getcsv(\array_shift($lines), ';', '"');
+        $headers = \array_map('trim', $headers);
 
-        // Build an index: headerName => position
-        // so we can quickly do data[headerName] = colValue
+        // Header-Index bauen
         $headerIndex = [];
         foreach ($headers as $idx => $hName) {
-            $headerIndex[$hName] = $idx; // e.g. $headerIndex["Deeplink"] = 0
+            $headerIndex[$hName] = $idx;
         }
 
-        // Parse column mappings
-        // e.g. "ext_Foo=Foo|ext_Bar=Bar" => we copy columns from ext_Foo -> Foo if Foo is empty
-        $mappingPairs = explode('|', $csvMapping);
+        // Spalten-Mapping parsen
+        // Bsp: "ext_Foo=Foo|ext_Bar=Bar" => ext_Foo -> Foo
+        $mappingPairs   = \explode('|', $csvMapping);
         $columnMappings = [];
         foreach ($mappingPairs as $pair) {
-            $pair = trim($pair);
-            if (!$pair) continue;
-            if (strpos($pair, '=') !== false) {
-                [$from, $to] = explode('=', $pair);
-                $columnMappings[trim($from)] = trim($to);
+            $pair = \trim($pair);
+            if (!$pair) {
+                continue;
+            }
+            if (\str_contains($pair, '=')) {
+                [$from, $to] = \array_map('trim', \explode('=', $pair));
+                $columnMappings[$from] = $to;
             }
         }
 
-        // Define the "must-have" columns
-        // If they are missing in the final row, we'll set them to ""
+        // Muss-Spalten (falls nicht vorhanden => leer)
         $mustHaveCols = [
             "Deeplink",
             "Produkt-Titel",
@@ -89,38 +103,31 @@ class CsvService
 
         $rows = [];
         foreach ($lines as $line) {
-            // Split the row
-            $cols = str_getcsv($line, ';', '"');
-
-            // Build an associative array for the row
+            $cols = \str_getcsv($line, ';', '"');
             $data = [];
 
-            // Now ensure "must-have" columns are defined (if they don't exist, set to "")
+            // Muss-Spalten absichern
             foreach ($mustHaveCols as $colName) {
-                if (!array_key_exists($colName, $data)) {
-                    $data[$colName] = "";
-                }
+                $data[$colName] = "";
             }
 
+            // Header zuordnen
             foreach ($headers as $hdrIndex => $hdrName) {
-                // be defensive
-                $data[$hdrName] = isset($cols[$hdrIndex]) ? $cols[$hdrIndex] : '';
+                // defensiv prüfen
+                $data[$hdrName] = $cols[$hdrIndex] ?? '';
             }
 
+            // Mapping anwenden
             foreach ($columnMappings as $fromCol => $toCol) {
-                if (isset($data[$fromCol]) && isset($data[$toCol])) {
-                    // As long as $fromCol is not empty, overwrite the value in $toCol
-                    if (!empty($data[$fromCol])) {
-                        $data[$toCol] = $data[$fromCol];
-                    }
+                if (!empty($data[$fromCol]) && \array_key_exists($toCol, $data)) {
+                    $data[$toCol] = $data[$fromCol];
                 }
-            }            
-            
+            }
 
             $rows[] = $data;
         }
 
-        $this->logger->info("Parsed " . count($rows) . " rows from CSV: {$csvUrl}");
+        $this->logger->info("Gelesene Zeilen aus CSV: " . \count($rows));
         return $rows;
     }
 }

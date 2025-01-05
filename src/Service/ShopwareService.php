@@ -1,14 +1,18 @@
 <?php
-// src/Service/ShopwareService.php
+/**
+ * Autor:    Sebastian Gräbner (sebastian@ju.nu)
+ * Firma:    JUNU Marketing Group LTD
+ * Datum:    2025-01-05
+ * Zweck:    Service-Klasse für Aufrufe gegen die Shopware-API.
+ */
 
 namespace JUNU\RealADCELL\Service;
 
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Log\LoggerInterface;
-use JUNU\RealADCELL\Service\UuidService;
 
-class ShopwareService
+final class ShopwareService
 {
     private Client $client;
     private LoggerInterface $logger;
@@ -19,19 +23,31 @@ class ShopwareService
     private ?string $token = null;
 
     /**
-     * Store token expiration time (Unix timestamp).
+     * Speichert das Ablaufdatum des Tokens als Unix-Zeitstempel.
      */
     private ?int $tokenExpiresAt = null;
 
     private ?string $salesChannelId = null;
     private ?string $defaultTaxId   = null;
 
+    /**
+     * Cache für Hersteller-IDs pro Name.
+     */
     private static array $manufacturerCache = [];
 
-    // raw category data => build tree => flatten
+    /**
+     * Rohe Kategorien (unstrukturierte Daten).
+     */
     private array $rawCategories = [];
+
+    /**
+     * Mapping Pfad => categoryId
+     */
     private array $flattenedCategoryPaths = [];
 
+    /**
+     * Konstruktor
+     */
     public function __construct(LoggerInterface $logger)
     {
         $this->logger       = $logger;
@@ -46,7 +62,20 @@ class ShopwareService
     }
 
     /**
-     * Before returning default headers, ensure the token is valid.
+     * Prüft, ob das Token abgelaufen ist oder bald abläuft.
+     */
+    private function isTokenExpired(): bool
+    {
+        if ($this->tokenExpiresAt === null) {
+            return true;
+        }
+        // 30-Sek-Puffer
+        return (\time() >= ($this->tokenExpiresAt - 30));
+    }
+
+    /**
+     * Gibt Standard-Header (inkl. Authorization) zurück,
+     * erneuert ggf. das Token, wenn es abgelaufen ist.
      */
     private function getDefaultHeaders(): array
     {
@@ -61,21 +90,8 @@ class ShopwareService
     }
 
     /**
-     * Checks if the current token is expired or close to expiry.
-     * You can adjust the "buffer" (30 seconds here) as you prefer.
-     */
-    private function isTokenExpired(): bool
-    {
-        if ($this->tokenExpiresAt === null) {
-            return true; // no expiry time known => treat as expired
-        }
-        // If we are within 30 seconds of token expiration, treat as expired
-        return (time() >= ($this->tokenExpiresAt - 30));
-    }
-
-    /**
-     * authenticate => sets $this->token and $this->tokenExpiresAt
-     * also fetches salesChannelId and defaultTaxId
+     * Authentifiziert gegen Shopware und speichert das Token.
+     * Lädt zusätzlich salesChannelId und defaultTaxId.
      */
     public function authenticate(): void
     {
@@ -91,36 +107,35 @@ class ShopwareService
                     'client_secret' => $this->clientSecret,
                 ],
             ]);
-            $data = json_decode((string)$resp->getBody(), true);
 
+            $data = \json_decode($resp->getBody()->getContents(), true);
             $this->token = $data['access_token'] ?? null;
-
-            // Usually Shopware returns an "expires_in" (3600 seconds, for example).
-            // If not provided, default to 3600 seconds for safety.
             $expiresInSeconds = $data['expires_in'] ?? 3600;
-            $this->tokenExpiresAt = time() + $expiresInSeconds;
+            $this->tokenExpiresAt = \time() + $expiresInSeconds;
 
             if (!$this->token) {
-                throw new \RuntimeException("No token in authentication response.");
+                throw new \RuntimeException("Token fehlte in der Authentifizierungsantwort.");
             }
 
             $this->logger->info(
-                sprintf(
-                    "Shopware authentication succeeded. Token expires in %d seconds (at %s).",
+                \sprintf(
+                    "Shopware-Auth OK. Token läuft ab in %d Sekunden (um %s).",
                     $expiresInSeconds,
-                    date('Y-m-d H:i:s', $this->tokenExpiresAt)
+                    \date('Y-m-d H:i:s', $this->tokenExpiresAt)
                 )
             );
 
             $this->fetchSalesChannelId();
             $this->fetchDefaultTaxId();
-
         } catch (GuzzleException $e) {
-            $this->logger->error("Shopware authentication failed: " . $e->getMessage());
-            throw new \RuntimeException("Shopware authentication failed.", 0, $e);
+            $this->logger->error("Shopware-Authentifizierung fehlgeschlagen: " . $e->getMessage());
+            throw new \RuntimeException("Shopware-Auth fehlgeschlagen.", 0, $e);
         }
     }
 
+    /**
+     * Sales-Channel-ID ermitteln
+     */
     private function fetchSalesChannelId(): void
     {
         $desiredName = $_ENV['SHOPWARE_SALES_CHANNEL_NAME'] ?? 'Storefront';
@@ -134,20 +149,24 @@ class ShopwareService
                     'limit'        => 1,
                 ],
             ]);
-            $data  = json_decode($resp->getBody(), true);
+
+            $data  = \json_decode($resp->getBody()->getContents(), true);
             $items = $data['data'] ?? [];
 
             if (!empty($items[0]['id'])) {
                 $this->salesChannelId = $items[0]['id'];
-                $this->logger->info("Sales-Channel '$desiredName' => ID {$this->salesChannelId}");
+                $this->logger->info("Sales-Channel '{$desiredName}' => ID {$this->salesChannelId}");
             } else {
-                $this->logger->warning("Sales-Channel '$desiredName' not found.");
+                $this->logger->warning("Sales-Channel '{$desiredName}' nicht gefunden.");
             }
         } catch (GuzzleException $e) {
-            $this->logger->error("fetchSalesChannelId error: " . $e->getMessage());
+            $this->logger->error("fetchSalesChannelId Fehler: " . $e->getMessage());
         }
     }
 
+    /**
+     * Standard-Tax ermitteln
+     */
     private function fetchDefaultTaxId(): void
     {
         $this->defaultTaxId = null;
@@ -158,12 +177,12 @@ class ShopwareService
                     'limit' => 50,
                 ],
             ]);
-            $data  = json_decode($resp->getBody(), true);
+            $data  = \json_decode($resp->getBody()->getContents(), true);
             $items = $data['data'] ?? [];
 
             $foundTax = null;
             foreach ($items as $item) {
-                // Check item['position'] or item['attributes']['position']
+                // Manche Shopware-Versionen legen "position=1" als Standard an
                 $pos = $item['position'] ?? ($item['attributes']['position'] ?? null);
                 if ((int)$pos === 1) {
                     $foundTax = $item;
@@ -172,28 +191,34 @@ class ShopwareService
             }
             if ($foundTax && !empty($foundTax['id'])) {
                 $this->defaultTaxId = $foundTax['id'];
-                $taxName = $foundTax['name'] ?? ($foundTax['attributes']['name'] ?? 'unknown');
-                $this->logger->info("Default tax => {$this->defaultTaxId} (name=$taxName, position=1)");
+                $taxName = $foundTax['name'] ?? ($foundTax['attributes']['name'] ?? 'unbekannt');
+                $this->logger->info("Default-Steuer: {$this->defaultTaxId} (Name={$taxName}, Position=1)");
             } else {
-                $this->logger->warning("No tax entry found with position=1 in /api/tax.");
+                $this->logger->warning("Keine Steuer mit position=1 unter /api/tax gefunden.");
             }
         } catch (GuzzleException $e) {
-            $this->logger->error("fetchDefaultTaxId error: " . $e->getMessage());
+            $this->logger->error("fetchDefaultTaxId Fehler: " . $e->getMessage());
         }
     }
 
+    /**
+     * Gibt die Default-Tax-ID zurück.
+     */
     public function getDefaultTaxId(): ?string
     {
         return $this->defaultTaxId;
     }
 
-    // ---------------------------------------
-    // CATEGORIES
-    // ---------------------------------------
+    // ----------------------------------------------------------------
+    // Kategorien
+    // ----------------------------------------------------------------
+    /**
+     * Lädt alle Kategorien, baut eine flache "Pfad => CatId"-Liste.
+     */
     public function getAllCategories(): array
     {
-        $this->rawCategories = [];
-        $this->flattenedCategoryPaths = [];
+        $this->rawCategories           = [];
+        $this->flattenedCategoryPaths  = [];
 
         $page  = 1;
         $limit = 100;
@@ -207,7 +232,7 @@ class ShopwareService
                         'limit' => $limit,
                     ],
                 ]);
-                $data  = json_decode($resp->getBody(), true);
+                $data  = \json_decode($resp->getBody()->getContents(), true);
                 $items = $data['data'] ?? [];
                 if (empty($items)) {
                     break;
@@ -228,27 +253,29 @@ class ShopwareService
                     }
                 }
 
-                if (count($items) < $limit) {
+                if (\count($items) < $limit) {
                     break;
                 }
                 $page++;
+                // Sicherheitsgrenze
                 if ($page > 20) {
                     break;
                 }
-
             } catch (GuzzleException $e) {
-                $this->logger->error("getAllCategories page=$page error: " . $e->getMessage());
+                $this->logger->error("getAllCategories Seite=$page Fehler: " . $e->getMessage());
                 break;
             }
         }
 
-        // Build tree + flatten
         $this->buildCategoryTree();
         $this->flattenCategoryTree();
 
-        return $this->flattenedCategoryPaths; 
+        return $this->flattenedCategoryPaths;
     }
 
+    /**
+     * Baut einen rudimentären Baum aus den rohen Kategorien.
+     */
     private function buildCategoryTree(): void
     {
         foreach ($this->rawCategories as $catId => $cat) {
@@ -259,8 +286,12 @@ class ShopwareService
         }
     }
 
+    /**
+     * Durchläuft den Baum rekursiv und baut Pfade wie "Parent > Child".
+     */
     private function flattenCategoryTree(): void
     {
+        // Wurzelknoten herausfinden
         $rootIds = [];
         foreach ($this->rawCategories as $catId => $cat) {
             $pId = $cat['parentId'];
@@ -275,21 +306,28 @@ class ShopwareService
         }
     }
 
+    /**
+     * Tiefensuche (DFS), um jeden Kinder-Knoten aufzulisten und
+     * Pfade in $this->flattenedCategoryPaths zu speichern.
+     */
     private function dfsCategory(string $catId, string $currentPath): void
     {
         $this->flattenedCategoryPaths[$currentPath] = $catId;
 
         $children = $this->rawCategories[$catId]['children'] ?? [];
         foreach ($children as $childId) {
-            $childName = $this->rawCategories[$childId]['name'] ?? '(no name)';
-            $path = $currentPath . ' > ' . $childName;
+            $childName = $this->rawCategories[$childId]['name'] ?? '(NoName)';
+            $path      = $currentPath . ' > ' . $childName;
             $this->dfsCategory($childId, $path);
         }
     }
 
-    // ---------------------------------------
-    // DELIVERY TIMES
-    // ---------------------------------------
+    // ----------------------------------------------------------------
+    // Lieferzeiten
+    // ----------------------------------------------------------------
+    /**
+     * Liefert ein Array mit allen Lieferzeiten: name => id
+     */
     public function getAllDeliveryTimes(): array
     {
         $allDts = [];
@@ -300,12 +338,12 @@ class ShopwareService
             try {
                 $resp = $this->client->get('/api/delivery-time', [
                     'headers' => $this->getDefaultHeaders(),
-                    'query' => [
+                    'query'   => [
                         'page'  => $page,
                         'limit' => $limit,
                     ],
                 ]);
-                $data  = json_decode($resp->getBody(), true);
+                $data  = \json_decode($resp->getBody()->getContents(), true);
                 $items = $data['data'] ?? [];
                 if (empty($items)) {
                     break;
@@ -319,28 +357,30 @@ class ShopwareService
                     }
                 }
 
-                if (count($items) < $limit) {
+                if (\count($items) < $limit) {
                     break;
                 }
                 $page++;
                 if ($page > 20) {
                     break;
                 }
-
             } catch (GuzzleException $e) {
-                $this->logger->error("getAllDeliveryTimes p=$page error: " . $e->getMessage());
+                $this->logger->error("getAllDeliveryTimes Seite=$page Fehler: " . $e->getMessage());
                 break;
             }
         }
         return $allDts;
     }
 
-    // ---------------------------------------
-    // MANUFACTURER
-    // ---------------------------------------
+    // ----------------------------------------------------------------
+    // Hersteller
+    // ----------------------------------------------------------------
+    /**
+     * Findet oder erstellt einen Hersteller für die entsprechende CSV.
+     */
     public function findOrCreateManufacturerForCsv(string $csvIndex, string $csvManufacturerName): ?string
     {
-        $name = trim($csvManufacturerName);
+        $name = \trim($csvManufacturerName);
         if (empty($name)) {
             $envKey  = "CSV_DEFAULT_MANUFACTURER_{$csvIndex}";
             $fallback= $_ENV[$envKey] ?? 'Default Hersteller';
@@ -349,26 +389,29 @@ class ShopwareService
         return $this->findOrCreateManufacturer($name);
     }
 
+    /**
+     * Prüft, ob der Hersteller bereits existiert. Falls nein, wird er neu angelegt.
+     */
     public function findOrCreateManufacturer(string $name): ?string
     {
-        $name = trim($name);
+        $name = \trim($name);
         if (empty($name)) {
             $name = 'Default Hersteller';
         }
 
-        $lowerName = mb_strtolower($name);
+        $lowerName = \mb_strtolower($name);
         if (isset(self::$manufacturerCache[$lowerName])) {
             return self::$manufacturerCache[$lowerName];
         }
 
-        // Search
+        // Suchen
         $existingId = $this->findManufacturerByName($name);
         if ($existingId) {
             self::$manufacturerCache[$lowerName] = $existingId;
             return $existingId;
         }
 
-        // Create
+        // Anlegen
         $newId = UuidService::generate();
         try {
             $resp = $this->client->post('/api/product-manufacturer', [
@@ -378,21 +421,25 @@ class ShopwareService
                     'name' => $name,
                 ],
             ]);
+
             if ($resp->getStatusCode() !== 204) {
-                $body = (string)$resp->getBody();
-                $this->logger->error("Failed to create manufacturer '$name'. Response: $body");
+                $body = $resp->getBody()->getContents();
+                $this->logger->error("Fehler beim Hersteller-Anlegen '{$name}'. Antwort: $body");
                 return null;
             }
-            $this->logger->info("Created new manufacturer '$name' => $newId");
+
+            $this->logger->info("Neuer Hersteller angelegt: '{$name}' => $newId");
             self::$manufacturerCache[$lowerName] = $newId;
             return $newId;
-
         } catch (GuzzleException $e) {
             $this->logger->error("createManufacturer exception: " . $e->getMessage());
             return null;
         }
     }
 
+    /**
+     * Sucht Hersteller über Name.
+     */
     private function findManufacturerByName(string $name): ?string
     {
         try {
@@ -411,23 +458,22 @@ class ShopwareService
                 'headers' => $this->getDefaultHeaders(),
                 'json'    => $searchBody,
             ]);
-            $data  = json_decode((string)$resp->getBody(), true);
+            $data  = \json_decode($resp->getBody()->getContents(), true);
             $items = $data['data'] ?? [];
 
-            if (!empty($items[0]['id'])) {
-                return $items[0]['id'];
-            }
-            return null;
-
+            return !empty($items[0]['id']) ? $items[0]['id'] : null;
         } catch (GuzzleException $e) {
-            $this->logger->warning("findManufacturerByName('$name') error: " . $e->getMessage());
+            $this->logger->warning("findManufacturerByName('$name') Fehler: " . $e->getMessage());
             return null;
         }
     }
 
-    // ---------------------------------------
-    // PRODUCTS
-    // ---------------------------------------
+    // ----------------------------------------------------------------
+    // Produkte
+    // ----------------------------------------------------------------
+    /**
+     * Sucht ein Produkt anhand der productNumber.
+     */
     public function findProductByNumber(string $productNumber): ?array
     {
         if (!$productNumber) {
@@ -441,33 +487,31 @@ class ShopwareService
                     'limit'                 => 1,
                 ],
             ]);
-            $data = json_decode($resp->getBody(), true);
+            $data = \json_decode($resp->getBody()->getContents(), true);
             return $data['data'][0] ?? null;
         } catch (GuzzleException $e) {
-            $this->logger->error("findProductByNumber error: " . $e->getMessage());
+            $this->logger->error("findProductByNumber Fehler: " . $e->getMessage());
             return null;
         }
     }
 
+    /**
+     * Legt ein Produkt neu an.
+     */
     public function createProduct(array $payload): bool
     {
-        // If no id => generate one
-        if (empty($payload['id'])) {
-            $payload['id'] = UuidService::generate();
-        }
-        // If no tax => defaultTax
-        if (empty($payload['taxId']) && $this->defaultTaxId) {
-            $payload['taxId'] = $this->defaultTaxId;
-        }
-        // If no categories => []
-        if (!isset($payload['categories'])) {
-            $payload['categories'] = [];
-        }
-        // If we have a salesChannel => add visibilities
+        // Füge ggf. eine ID und taxId hinzu
+        $payload['id'] ??= UuidService::generate();
+        $payload['taxId'] ??= $this->defaultTaxId;
+
+        // Kategorien-Array absichern
+        $payload['categories'] ??= [];
+
+        // Sichtbarkeit für SalesChannel
         if (!empty($this->salesChannelId)) {
             $payload['visibilities'] = [[
                 'salesChannelId' => $this->salesChannelId,
-                'visibility'     => 30, 
+                'visibility'     => 30,
             ]];
         }
 
@@ -477,18 +521,20 @@ class ShopwareService
                 'json'    => $payload,
             ]);
             if ($resp->getStatusCode() !== 204) {
-                $body = (string)$resp->getBody();
-                $this->logger->error("Create product failed: $body");
+                $body = $resp->getBody()->getContents();
+                $this->logger->error("createProduct fehlgeschlagen: $body");
                 return false;
             }
             return true;
-
         } catch (GuzzleException $e) {
-            $this->logger->error("createProduct error: " . $e->getMessage());
+            $this->logger->error("createProduct Fehler: " . $e->getMessage());
             return false;
         }
     }
 
+    /**
+     * Aktualisiert ein existierendes Produkt.
+     */
     public function updateProduct(string $id, array $payload): bool
     {
         try {
@@ -497,21 +543,23 @@ class ShopwareService
                 'json'    => $payload,
             ]);
             if ($resp->getStatusCode() !== 204) {
-                $body = (string)$resp->getBody();
-                $this->logger->error("Update product failed: $body");
+                $body = $resp->getBody()->getContents();
+                $this->logger->error("updateProduct fehlgeschlagen: $body");
                 return false;
             }
             return true;
-
         } catch (GuzzleException $e) {
-            $this->logger->error("updateProduct error: " . $e->getMessage());
+            $this->logger->error("updateProduct Fehler: " . $e->getMessage());
             return false;
         }
     }
 
-    // ---------------------------------------
+    // ----------------------------------------------------------------
     // MEDIA
-    // ---------------------------------------
+    // ----------------------------------------------------------------
+    /**
+     * Sucht eine Media-ID anhand des Dateinamens (ohne Extension).
+     */
     public function findMediaByFilename(string $fileNameWithoutExt): ?string
     {
         try {
@@ -522,16 +570,17 @@ class ShopwareService
                     'limit'            => 1,
                 ],
             ]);
-            $data = json_decode($resp->getBody(), true);
-            if (!empty($data['data'][0]['id'])) {
-                return $data['data'][0]['id'];
-            }
+            $data = \json_decode($resp->getBody()->getContents(), true);
+            return $data['data'][0]['id'] ?? null;
         } catch (GuzzleException $e) {
-            $this->logger->error("findMediaByFilename error: " . $e->getMessage());
+            $this->logger->error("findMediaByFilename Fehler: " . $e->getMessage());
+            return null;
         }
-        return null;
     }
 
+    /**
+     * Erstellt ein leeres Media-Objekt in Shopware.
+     */
     public function createMediaEntity(?string $mediaFolderId = null): ?string
     {
         $mediaId = UuidService::generate();
@@ -546,21 +595,24 @@ class ShopwareService
                 'json'    => $payload,
             ]);
             if ($resp->getStatusCode() !== 204) {
-                $body = (string)$resp->getBody();
-                $this->logger->error("createMediaEntity failed: $body");
+                $body = $resp->getBody()->getContents();
+                $this->logger->error("createMediaEntity fehlgeschlagen: $body");
                 return null;
             }
             return $mediaId;
         } catch (GuzzleException $e) {
-            $this->logger->error("createMediaEntity error: " . $e->getMessage());
+            $this->logger->error("createMediaEntity Fehler: " . $e->getMessage());
             return null;
         }
     }
 
+    /**
+     * Lädt ein Bild direkt aus einer URL zu Shopware hoch.
+     */
     public function uploadImageFromUrl(string $mediaId, string $imageUrl, string $fileNameWithoutExt): bool
     {
         try {
-            $uploadUrl = "/api/_action/media/{$mediaId}/upload?fileName=" . urlencode($fileNameWithoutExt);
+            $uploadUrl = "/api/_action/media/{$mediaId}/upload?fileName=" . \urlencode($fileNameWithoutExt);
 
             $resp = $this->client->post($uploadUrl, [
                 'headers' => $this->getDefaultHeaders(),
@@ -569,17 +621,20 @@ class ShopwareService
                 ],
             ]);
             if ($resp->getStatusCode() !== 204) {
-                $body = (string)$resp->getBody();
-                $this->logger->error("uploadImageFromUrl error: $body");
+                $body = $resp->getBody()->getContents();
+                $this->logger->error("uploadImageFromUrl Fehler: $body");
                 return false;
             }
             return true;
         } catch (GuzzleException $e) {
-            $this->logger->error("uploadImageFromUrl exception: " . $e->getMessage());
+            $this->logger->error("uploadImageFromUrl Fehler: " . $e->getMessage());
             return false;
         }
     }
 
+    /**
+     * Lädt mehrere Bilder hoch und gibt die Media-IDs zurück.
+     */
     public function uploadImages(array $imageUrls): array
     {
         static $cache = [];
@@ -590,41 +645,40 @@ class ShopwareService
                 continue;
             }
             try {
-                $filename           = basename(parse_url($imageUrl, PHP_URL_PATH) ?? '');
-                $fileNameWithoutExt = pathinfo($filename, PATHINFO_FILENAME);
+                $filename           = \basename(\parse_url($imageUrl, \PHP_URL_PATH) ?? '');
+                $fileNameWithoutExt = \pathinfo($filename, \PATHINFO_FILENAME);
 
-                // local cache
+                // Schon im Cache?
                 if (isset($cache[$fileNameWithoutExt])) {
                     $mediaIds[] = $cache[$fileNameWithoutExt];
                     continue;
                 }
 
-                // check if media with this fileName exists
+                // Prüfen, ob es schon existiert
                 $existing = $this->findMediaByFilename($fileNameWithoutExt);
                 if ($existing) {
-                    $this->logger->info("Media already exists: $filename => $existing");
+                    $this->logger->info("Media existiert bereits: $filename => $existing");
                     $mediaIds[] = $existing;
                     $cache[$fileNameWithoutExt] = $existing;
                     continue;
                 }
 
-                // create + upload
+                // Neues Media-Objekt + Upload
                 $newMediaId = $this->createMediaEntity();
                 if (!$newMediaId) {
-                    $this->logger->error("Failed to create media entity for $imageUrl");
+                    $this->logger->error("Fehler beim Erstellen der Media-Entity für $imageUrl");
                     continue;
                 }
                 if (!$this->uploadImageFromUrl($newMediaId, $imageUrl, $fileNameWithoutExt)) {
-                    $this->logger->error("Failed to upload image from $imageUrl");
+                    $this->logger->error("Fehler beim Bild-Upload von $imageUrl");
                     continue;
                 }
 
                 $mediaIds[] = $newMediaId;
                 $cache[$fileNameWithoutExt] = $newMediaId;
-                $this->logger->info("Uploaded image: $imageUrl => $newMediaId");
-
+                $this->logger->info("Bild hochgeladen: $imageUrl => $newMediaId");
             } catch (\Throwable $th) {
-                $this->logger->error("uploadImages error: " . $th->getMessage());
+                $this->logger->error("uploadImages Fehler: " . $th->getMessage());
             }
         }
 

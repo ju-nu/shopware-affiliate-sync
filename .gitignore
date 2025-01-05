@@ -1,16 +1,15 @@
-# Composer vendor
-/vendor/
+# -- PHP / Composer --
+vendor/
 composer.lock
 
-# Environment files
+# -- PHPStorm / IDEs --
+.idea/
+*.iml
+
+# -- Logs --
+logs/*
+!logs/.gitkeep
+
+# -- Env Files --
 .env
 .env.local
-.env.*.local
-
-# Log files
-logs/
-*.log
-
-# OS / Editor files
-.DS_Store
-Thumbs.db

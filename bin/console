@@ -1,5 +1,11 @@
 #!/usr/bin/env php
 <?php
+/**
+ * Autor:    Sebastian Gräbner (sebastian@ju.nu)
+ * Firma:    JUNU Marketing Group LTD
+ * Datum:    2025-01-05
+ * Zweck:    Konsolen-Starter für den Symfony-Console Befehl "sync".
+ */
 
 require __DIR__ . '/../vendor/autoload.php';
 
@@ -7,14 +13,14 @@ use Symfony\Component\Console\Application;
 use JUNU\RealADCELL\EnvLoader;
 use JUNU\RealADCELL\Commands\SyncCommand;
 
-// 1) Load environment variables
+// 1) ENV-Variablen laden
 EnvLoader::loadEnv(__DIR__ . '/../');
 
-// 2) Create the Console Application
+// 2) Console Application erzeugen
 $app = new Application('JUNU RealADCELL Sync', '1.0.0');
 
-// 3) Register commands
+// 3) Command registrieren
 $app->add(new SyncCommand());
 
-// 4) Run
+// 4) Ausführen
 $app->run();
