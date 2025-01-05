@@ -135,6 +135,12 @@ class SyncCommand extends Command
                         // Bilder hochladen => Array von Media-IDs
                         $mediaIds = $shopwareService->uploadImages([$mapped['imageUrl']]);
 
+                        if (empty($mediaIds)) {
+                            $logger->warning("Konnte Bilder nicht hochladen. Überspringe Produkt [{$mapped['title']}]");
+                            $skippedCount++;
+                            continue; // geht zur nächsten Zeile in der CSV
+                        }
+
                         // Kategorie nur für neue Produkte
                         $catId = null;
                         if (!empty($mapped['categoryHint'])) {

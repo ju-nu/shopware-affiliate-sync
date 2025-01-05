@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Autor:    Sebastian Gräbner (sebastian@ju.nu)
  * Firma:    JUNU Marketing Group LTD
@@ -85,7 +86,7 @@ final class ShopwareService
         return [
             'Accept'       => 'application/json',
             'Content-Type' => 'application/json',
-            'Authorization'=> "Bearer {$this->token}",
+            'Authorization' => "Bearer {$this->token}",
         ];
     }
 
@@ -383,7 +384,7 @@ final class ShopwareService
         $name = \trim($csvManufacturerName);
         if (empty($name)) {
             $envKey  = "CSV_DEFAULT_MANUFACTURER_{$csvIndex}";
-            $fallback= $_ENV[$envKey] ?? 'Default Hersteller';
+            $fallback = $_ENV[$envKey] ?? 'Default Hersteller';
             $name    = $fallback;
         }
         return $this->findOrCreateManufacturer($name);
@@ -584,7 +585,7 @@ final class ShopwareService
     public function createMediaEntity(?string $mediaFolderId = null): ?string
     {
         $mediaId = UuidService::generate();
-        $payload = [ 'id' => $mediaId ];
+        $payload = ['id' => $mediaId];
         if ($mediaFolderId) {
             $payload['mediaFolderId'] = $mediaFolderId;
         }
@@ -639,22 +640,24 @@ final class ShopwareService
     {
         static $cache = [];
         $mediaIds     = [];
-
+    
         foreach ($imageUrls as $imageUrl) {
             if (empty($imageUrl)) {
                 continue;
             }
+    
             try {
+                // Dateiname ohne Extension ermitteln
                 $filename           = \basename(\parse_url($imageUrl, \PHP_URL_PATH) ?? '');
                 $fileNameWithoutExt = \pathinfo($filename, \PATHINFO_FILENAME);
-
-                // Schon im Cache?
+    
+                // Falls schon im Cache -> direkt hinzufügen
                 if (isset($cache[$fileNameWithoutExt])) {
                     $mediaIds[] = $cache[$fileNameWithoutExt];
                     continue;
                 }
-
-                // Prüfen, ob es schon existiert
+    
+                // Prüfen, ob Media bereits in Shopware existiert
                 $existing = $this->findMediaByFilename($fileNameWithoutExt);
                 if ($existing) {
                     $this->logger->info("Media existiert bereits: $filename => $existing");
@@ -662,26 +665,59 @@ final class ShopwareService
                     $cache[$fileNameWithoutExt] = $existing;
                     continue;
                 }
-
-                // Neues Media-Objekt + Upload
+    
+                // Neues Media-Objekt erzeugen
                 $newMediaId = $this->createMediaEntity();
                 if (!$newMediaId) {
                     $this->logger->error("Fehler beim Erstellen der Media-Entity für $imageUrl");
-                    continue;
+                    // Wir brechen ab und geben ein leeres Array zurück
+                    return [];
                 }
-                if (!$this->uploadImageFromUrl($newMediaId, $imageUrl, $fileNameWithoutExt)) {
-                    $this->logger->error("Fehler beim Bild-Upload von $imageUrl");
-                    continue;
+    
+                // Jetzt dreimal versuchen, das Bild hochzuladen:
+                $attempt      = 1;
+                $maxAttempts  = 3;
+                $uploadOk     = false;
+    
+                while ($attempt <= $maxAttempts) {
+                    // Upload-Versuch
+                    if ($this->uploadImageFromUrl($newMediaId, $imageUrl, $fileNameWithoutExt)) {
+                        // Erfolg!
+                        $uploadOk = true;
+                        break;
+                    }
+    
+                    // Falls fehlgeschlagen -> warten und nochmal
+                    if ($attempt === 1) {
+                        $this->logger->warning("Erster Upload-Versuch fehlgeschlagen. Warte 10 Sekunden...");
+                        \sleep(10);
+                    } elseif ($attempt === 2) {
+                        $this->logger->warning("Zweiter Upload-Versuch fehlgeschlagen. Warte 30 Sekunden...");
+                        \sleep(30);
+                    }
+    
+                    $attempt++;
                 }
-
+    
+                // Falls alle 3 Versuche fehlschlagen => Produkt wird übersprungen
+                if (!$uploadOk) {
+                    $this->logger->error("Bild-Upload endgueltig fehlgeschlagen für $imageUrl. Produkt wird übersprungen.");
+                    return []; 
+                }
+    
+                // Cache & Rückgabe befüllen
                 $mediaIds[] = $newMediaId;
                 $cache[$fileNameWithoutExt] = $newMediaId;
+    
                 $this->logger->info("Bild hochgeladen: $imageUrl => $newMediaId");
+    
             } catch (\Throwable $th) {
                 $this->logger->error("uploadImages Fehler: " . $th->getMessage());
+                return [];
             }
         }
-
+    
         return $mediaIds;
     }
+    
 }
