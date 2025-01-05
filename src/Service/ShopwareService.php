@@ -567,7 +567,7 @@ final class ShopwareService
         $fileNameWithoutExt = preg_replace('/[^\w.\-]+/', '_', $fileNameWithoutExt);
         $fileNameWithoutExt = trim($fileNameWithoutExt, '_');
         if (empty($fileNameWithoutExt)) {
-            return false;
+            return null;
         }
         
         try {
