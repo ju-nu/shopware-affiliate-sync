@@ -14,31 +14,29 @@ use Monolog\Formatter\LineFormatter;
 
 final class LoggerFactory
 {
-    /**
-     * Erzeugt einen Logger, der sowohl in ein Logfile als auch auf die Konsole schreibt.
-     *
-     * @param string $name Name/Channel des Loggers
-     * @return Logger
-     */
     public static function createLogger(string $name = 'app'): Logger
     {
         $logger = new Logger($name);
 
-        // Format: [YYYY-mm-dd HH:ii:ss] channel.LEVEL: message
+        // Beispiel-Format
         $dateFormat   = "Y-m-d H:i:s";
         $outputFormat = "[%datetime%] %channel%.%level_name%: %message% %context%\n";
-        $formatter    = new LineFormatter($outputFormat, $dateFormat);
+
+        // Der dritte Parameter in LineFormatter ist "$allowInlineLineBreaks" (false/true)
+        // der vierte "$ignoreEmptyContextAndExtra".
+        // Danach können wir separate Methoden nutzen, um das JSON-Encoding zu beeinflussen.
+        $formatter = new LineFormatter($outputFormat, $dateFormat, false, true);
+        
+        // Wichtig, um Umlaute nicht als \uXXXX zu escapen und Sonderzeichen beizubehalten
+        $formatter->setJsonEncodeOptions(JSON_UNESCAPED_UNICODE);
 
         // File Handler
         $logFilePath = $_ENV['LOG_FILE'] ?? 'logs/app.log';
-        if (file_exists($logFilePath)) {
-            unlink($logFilePath);
-        }
         $fileHandler = new StreamHandler($logFilePath, Logger::DEBUG);
         $fileHandler->setFormatter($formatter);
         $logger->pushHandler($fileHandler);
 
-        // Console Handler
+        // Optional: Konsolen-Handler (falls erwünscht)
         $consoleHandler = new StreamHandler('php://stdout', Logger::DEBUG);
         $consoleHandler->setFormatter($formatter);
         $logger->pushHandler($consoleHandler);
