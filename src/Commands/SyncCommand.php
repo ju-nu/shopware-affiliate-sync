@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Autor:    Sebastian Gräbner (sebastian@ju.nu)
  * Firma:    JUNU Marketing Group LTD
@@ -121,7 +122,7 @@ class SyncCommand extends Command
                     $brutto       = (float) \str_replace(',', '.', $mapped['priceBrutto']);
                     $streichpreis = (float) \str_replace(',', '.', $mapped['listPrice']);
 
-                    $actualPrice = $brutto;  
+                    $actualPrice = $brutto;
                     $listPrice   = $streichpreis > 0 ? $streichpreis : 0.0;
 
                     // Prüfen ob Produkt existiert
@@ -143,45 +144,44 @@ class SyncCommand extends Command
 
                         // Kategorie nur für neue Produkte
                         $catId = null;
-                        if (!empty($mapped['categoryHint'])) {
-                            $bestCatPath = $openAiService->bestCategory(
-                                $mapped['title'],
-                                $mapped['description'],
-                                $mapped['categoryHint'],
-                                \array_keys($categoryMap)
-                            );
-                        
-                            // Wenn false => OpenAI call fehlgeschlagen => skip
-                            if ($bestCatPath === false) {
-                                $logger->warning("OpenAI-Kategorievorschlag fehlgeschlagen => Produkt wird übersprungen.");
-                                $skippedCount++;
-                                continue;
-                            }
-                        
-                            if (isset($categoryMap[$bestCatPath])) {
-                                $catId = $categoryMap[$bestCatPath];
-                            }
+                        $bestCatPath = $openAiService->bestCategory(
+                            $mapped['title'],
+                            $mapped['description'],
+                            $mapped['categoryHint'],
+                            \array_keys($categoryMap)
+                        );
+
+                        // Wenn false => OpenAI call fehlgeschlagen => skip
+                        if ($bestCatPath === false) {
+                            $logger->warning("OpenAI-Kategorievorschlag fehlgeschlagen => Produkt wird übersprungen.");
+                            $skippedCount++;
+                            continue;
                         }
+
+                        if (isset($categoryMap[$bestCatPath])) {
+                            $catId = $categoryMap[$bestCatPath];
+                        }
+
 
                         // Lieferzeit nur für neue Produkte
                         $deliveryTimeId = null;
-                        if (!empty($mapped['deliveryTimeCsv'])) {
-                            $bestDt = $openAiService->bestDeliveryTime(
-                                $mapped['deliveryTimeCsv'],
-                                \array_keys($deliveryTimes)
-                            );
+                        $mapped['deliveryTimeCsv'] = $mapped['deliveryTimeCsv'] ?: '1 Tag';
+                        $bestDt = $openAiService->bestDeliveryTime(
+                            $mapped['deliveryTimeCsv'],
+                            \array_keys($deliveryTimes)
+                        );
 
-                            // Bei false => skip
-                            if ($bestDt === false) {
-                                $logger->warning("OpenAI-Lieferzeitvorschlag fehlgeschlagen => Produkt wird übersprungen.");
-                                $skippedCount++;
-                                continue;
-                            }
-
-                            if (isset($deliveryTimes[$bestDt])) {
-                                $deliveryTimeId = $deliveryTimes[$bestDt];
-                            }
+                        // Bei false => skip
+                        if ($bestDt === false) {
+                            $logger->warning("OpenAI-Lieferzeitvorschlag fehlgeschlagen => Produkt wird übersprungen.");
+                            $skippedCount++;
+                            continue;
                         }
+
+                        if (isset($deliveryTimes[$bestDt])) {
+                            $deliveryTimeId = $deliveryTimes[$bestDt];
+                        }
+
 
                         // Beschreibung umschreiben
                         $rewrittenDesc = $openAiService->rewriteDescription(
@@ -215,7 +215,7 @@ class SyncCommand extends Command
 
                         // Kategorie?
                         if ($catId) {
-                            $payload['categories'] = [[ 'id' => $catId ]];
+                            $payload['categories'] = [['id' => $catId]];
                         }
 
                         // AAN => manufacturerNumber
@@ -306,7 +306,7 @@ class SyncCommand extends Command
 
                 $logger->info(
                     "CSV '$csvId' fertig. " .
-                    "Created=$createdCount, Updated=$updatedCount, Skipped=$skippedCount"
+                        "Created=$createdCount, Updated=$updatedCount, Skipped=$skippedCount"
                 );
             } // Ende foreach CSV
 
