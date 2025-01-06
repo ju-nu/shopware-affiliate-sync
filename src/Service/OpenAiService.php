@@ -4,7 +4,7 @@
  * Firma:    JUNU Marketing Group LTD
  * Datum:    2025-01-05
  * Zweck:    Service-Klasse zur Kommunikation mit OpenAI (ChatGPT),
- *           inklusive Rate-Limit-Handling und Retries.
+ *           inkl. Rate-Limit-Handling und Rückgabe false bei Fehlschlag.
  */
 
 namespace JUNU\ShopwareAffiliateSync\Service;
@@ -22,8 +22,8 @@ final class OpenAiService
     private string $model;
 
     /**
-     * Definiert, wie oft wir bei 429 (Rate Limit) erneut versuchen und wie lange wir warten.
-     * z. B. bei 3 Versuchen => Wartezeiten 30s, 60s, 120s.
+     * Wartezeiten für die Retry-Logik bei 429 (Rate Limit).
+     * (z. B. 3 Versuche: Warte 30s, 60s, 120s)
      */
     private array $backoffWaitSeconds = [30, 60, 120];
 
@@ -43,13 +43,12 @@ final class OpenAiService
     }
 
     /**
-     * Umschreibt die Produktbeschreibung auf Deutsch, ohne den Produkt-Titel zu wiederholen.
-     * Falls durch zu viele Requests ein 429 kommt, versuchen wir (standardmäßig) bis zu 3 Mal,
-     * mit steigenden Wartezeiten.
+     * Umschreibt die Produktbeschreibung (Deutsch), ohne den Titel zu wiederholen.
+     * Falls OpenAI nicht funktioniert, wird "false" zurückgegeben.
      */
-    public function rewriteDescription(string $title, string $description): string
+    public function rewriteDescription(string $title, string $description): bool|string
     {
-        // Wenn nichts drin steht, gleich zurück
+        // Wenn beides leer, ergibt das keinen Sinn
         if (empty(\trim($title)) && empty(\trim($description))) {
             return '';
         }
@@ -62,10 +61,7 @@ final class OpenAiService
             "Produktname:\n" . $title . "\n\n" .
             "Schreibe sie conversionstark, ansprechend und positiv in deutscher Sprache.";
 
-        // Fallback für den Fall, dass alle Versuche scheitern => wir nutzen dann einfach den Originaltext
-        $fallbackText = $description;
-
-        // Request-Payload für ChatGPT
+        // JSON-Payload für ChatGPT
         $payload = [
             'model'    => $this->model,
             'messages' => [
@@ -74,23 +70,25 @@ final class OpenAiService
             'max_tokens' => 400,
         ];
 
-        // Unser generischer Chat-Aufruf mit Retry/Backoff:
-        return $this->postChatCompletion($payload, $fallbackText);
+        // Wir nutzen unsere zentrale Hilfsmethode
+        $result = $this->postChatCompletion($payload);
+
+        // Falls "false" => Fehler (z. B. Rate limit), sonst trimmen
+        return $result === false ? false : \trim($result);
     }
 
     /**
-     * Bestimmt die passendste Kategorie aus einer vorhandenen Liste (shopwareCategoryNames),
-     * basierend auf Titel, Beschreibung und csvCategory. 
-     * Bei Rate-Limit-Fehlern wird bis zu 3 Mal erneut versucht, bevor wir mit null abbrechen.
+     * Ermittelt die passendste Kategorie.
+     * Rückgabe: string|false (false bei Fehler oder Rate Limit).
      */
     public function bestCategory(
         string $title,
         string $description,
         string $csvCategory,
         array $shopwareCategoryNames
-    ): ?string {
+    ): bool|string {
         if (empty($shopwareCategoryNames)) {
-            return null;
+            return false; 
         }
 
         $categoryList = "- " . \implode("\n- ", $shopwareCategoryNames);
@@ -101,9 +99,6 @@ final class OpenAiService
                   "Vorhandene Kategorien:\n{$categoryList}\n\n" .
                   "Welche EINE Kategorie passt am besten? Antworte mit dem exakten Namen aus obiger Liste.";
 
-        // Fallback => null, wenn gar nichts klappt
-        $fallbackText = null;
-
         $payload = [
             'model'    => $this->model,
             'messages' => [
@@ -112,23 +107,20 @@ final class OpenAiService
             'max_tokens' => 50,
         ];
 
-        $result = $this->postChatCompletion($payload, $fallbackText);
-        // Wenn postChatCompletion scheitert, kommt Fallback (= null) zurück
-        $best = \trim($result ?? '');
-        return $best !== '' ? $best : null;
+        $result = $this->postChatCompletion($payload);
+        return $result === false ? false : \trim($result);
     }
 
     /**
-     * Ermittelt die passende Lieferzeit (bestDeliveryTime) aus einer bestehenden Liste
-     * an Shopware-Lieferzeiten. 
-     * Bei Rate Limit-Fehlern wird ebenfalls mehrmals versucht.
+     * Ermittelt die passende Lieferzeit.
+     * Rückgabe: string|false (false bei Fehler).
      */
     public function bestDeliveryTime(
         string $csvDeliveryTime,
         array $shopwareDeliveryTimeNames
-    ): ?string {
+    ): bool|string {
         if (empty($shopwareDeliveryTimeNames)) {
-            return null;
+            return false;
         }
 
         $dtList = "- " . \implode("\n- ", $shopwareDeliveryTimeNames);
@@ -136,8 +128,6 @@ final class OpenAiService
                   "Es gibt folgende Shopware-Lieferzeiten:\n{$dtList}\n\n" .
                   "Welche passt am besten? Antworte mit dem exakten Namen.";
 
-        $fallbackText = null;
-
         $payload = [
             'model'    => $this->model,
             'messages' => [
@@ -146,27 +136,21 @@ final class OpenAiService
             'max_tokens' => 50,
         ];
 
-        $result = $this->postChatCompletion($payload, $fallbackText);
-        $best   = \trim($result ?? '');
-        return $best !== '' ? $best : null;
+        $result = $this->postChatCompletion($payload);
+        return $result === false ? false : \trim($result);
     }
 
     /**
-     * ----------------------------------------------
-     * ZENTRALE HILFSMETHODE:
-     * POST-Request an /v1/chat/completions mit
-     * Retry-Mechanismus bei HTTP 429 (Rate Limit).
-     *
-     * @param array       $jsonPayload   Das JSON, das an OpenAI gesendet wird
-     * @param string|null $fallback      Rückgabe falls alle Versuche scheitern
-     *
-     * @return string|null Im Erfolgsfall der ChatGPT-Text, sonst fallback
+     * -------------------------------------------------------
+     * PRIVATE HILFSMETHODE:
+     * Ruft /v1/chat/completions auf, mit Retry bei 429-Fehler.
+     * Gibt einen String zurück oder "false" bei Fehlschlag.
+     * -------------------------------------------------------
      */
-    private function postChatCompletion(array $jsonPayload, ?string $fallback): ?string
+    private function postChatCompletion(array $jsonPayload): bool|string
     {
-        // Versuche die Requests so oft, wie in $backoffWaitSeconds definiert (z. B. 3 Mal).
-        $maxAttempts = \count($this->backoffWaitSeconds) + 1; // z. B. 3 Wartezeiten => 4 Versuche
-        $attempt     = 0;
+        $maxAttempts = \count($this->backoffWaitSeconds) + 1;
+        $attempt = 0;
 
         while ($attempt < $maxAttempts) {
             $attempt++;
@@ -181,50 +165,44 @@ final class OpenAiService
                 ]);
 
                 $json = \json_decode($response->getBody()->getContents(), true);
-                // Wir holen uns den content-Feld aus der ersten Choice
-                $content = $json['choices'][0]['message']['content'] ?? '';
-                return \trim($content);
-
+                // Text aus dem "content"-Feld
+                return $json['choices'][0]['message']['content'] ?? '';
             } catch (ClientException $e) {
-                // ClientException => 4xx/429 etc.
-                $code    = $e->getResponse()?->getStatusCode() ?? 0;
-                $message = $e->getMessage();
-
+                // 4xx - check if 429
+                $code = $e->getResponse()?->getStatusCode() ?? 0;
                 if ($code === 429) {
-                    // Rate Limit erreicht => Warten und erneut versuchen
+                    // Rate Limit
                     if ($attempt < $maxAttempts) {
                         $waitSec = $this->backoffWaitSeconds[$attempt - 1] ?? 30;
                         $this->logger->warning(sprintf(
-                            "OpenAI Rate-Limit (429) Versuch %d/%d. Warte %d Sek... (%s)",
+                            "OpenAI Rate-Limit (429). Versuch %d/%d. Warte %d Sekunden...",
                             $attempt,
                             $maxAttempts,
-                            $waitSec,
-                            $message
+                            $waitSec
                         ));
                         \sleep($waitSec);
-                        continue; // Nächster Versuch
+                        continue;
                     }
-                    // Letzter Versuch hat 429 geliefert => Abbrechen mit Fallback
-                    $this->logger->error("OpenAI 429: Alle Versuche aufgebraucht. Nutze Fallback.");
-                    return $fallback;
+                    // Letzter Versuch => Abbruch
+                    $this->logger->error("OpenAI 429: Alle Versuche aufgebraucht => gebe false zurück.");
+                    return false;
                 } else {
-                    // Andere 4xx-Fehler => Abbrechen
-                    $this->logger->error("OpenAI error {$code}: {$message}");
-                    return $fallback;
+                    // anderer Fehler => Abbruch
+                    $this->logger->error("OpenAI error {$code}: {$e->getMessage()}");
+                    return false;
                 }
-
             } catch (GuzzleException $e) {
-                // Andere Guzzle-Fehler (z. B. Netzwerk), wir brechen ab
+                // Netzwerk-/Timeout-Fehler, direkt abbrechen
                 $this->logger->error("OpenAI GuzzleException: " . $e->getMessage());
-                return $fallback;
+                return false;
             } catch (\Throwable $t) {
-                // Unbekannte Fehler, brechen wir ab
+                // Sonstiger Fehler, abbrechen
                 $this->logger->error("OpenAI unknown error: " . $t->getMessage());
-                return $fallback;
+                return false;
             }
         }
 
-        // Wenn wir aus der Schleife rausfallen, ohne return => fallback
-        return $fallback;
+        // Falls wir aus der Schleife fliegen, ebenfalls false
+        return false;
     }
 }

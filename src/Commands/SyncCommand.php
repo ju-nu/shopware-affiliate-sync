@@ -150,7 +150,15 @@ class SyncCommand extends Command
                                 $mapped['categoryHint'],
                                 \array_keys($categoryMap)
                             );
-                            if ($bestCatPath && isset($categoryMap[$bestCatPath])) {
+                        
+                            // Wenn false => OpenAI call fehlgeschlagen => skip
+                            if ($bestCatPath === false) {
+                                $logger->warning("OpenAI-Kategorievorschlag fehlgeschlagen => Produkt wird übersprungen.");
+                                $skippedCount++;
+                                continue;
+                            }
+                        
+                            if (isset($categoryMap[$bestCatPath])) {
                                 $catId = $categoryMap[$bestCatPath];
                             }
                         }
@@ -162,7 +170,15 @@ class SyncCommand extends Command
                                 $mapped['deliveryTimeCsv'],
                                 \array_keys($deliveryTimes)
                             );
-                            if ($bestDt && isset($deliveryTimes[$bestDt])) {
+
+                            // Bei false => skip
+                            if ($bestDt === false) {
+                                $logger->warning("OpenAI-Lieferzeitvorschlag fehlgeschlagen => Produkt wird übersprungen.");
+                                $skippedCount++;
+                                continue;
+                            }
+
+                            if (isset($deliveryTimes[$bestDt])) {
                                 $deliveryTimeId = $deliveryTimes[$bestDt];
                             }
                         }
@@ -172,6 +188,13 @@ class SyncCommand extends Command
                             $mapped['title'],
                             $mapped['description']
                         );
+
+                        // Falls false => skip
+                        if ($rewrittenDesc === false) {
+                            $logger->warning("OpenAI-Beschreibung fehlgeschlagen => Produkt wird übersprungen.");
+                            $skippedCount++;
+                            continue;
+                        }
 
                         // Payload fürs Erstellen
                         $payload = [
