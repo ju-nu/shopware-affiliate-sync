@@ -250,10 +250,6 @@ class SyncCommand extends Command
                         // Cover & Media in einem Aufruf
                         if (!empty($mediaIds)) {
                             $payload['cover'] = ['mediaId' => $mediaIds[0]];
-                            $payload['media'] = \array_map(
-                                fn (string $mId): array => ['mediaId' => $mId],
-                                $mediaIds
-                            );
                         }
 
                         // Produkt erzeugen

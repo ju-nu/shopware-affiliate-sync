@@ -91,6 +91,9 @@ final class OpenAiService
             return false; 
         }
 
+        var_dump($categoryList);
+        die();
+
         $categoryList = "- " . \implode("\n- ", $shopwareCategoryNames);
         $prompt = "Wir haben ein Produkt:\n" .
                   "- Titel: {$title}\n" .
