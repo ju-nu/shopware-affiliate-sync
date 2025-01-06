@@ -166,7 +166,6 @@ final class CsvService
         }
 
         $this->logger->info("Gelesene Zeilen aus CSV: " . \count($rows));
-        var_dump($rows);
         return $rows;
     }
 }
