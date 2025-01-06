@@ -127,18 +127,16 @@ final class CsvService
             "Deeplink",
             "Produkt-Titel",
             "Produktbeschreibung",
-            "Bruttopreis",
+            "Preis (Brutto)",
             "Streichpreis",
-            "Währung",
             "europäische Artikelnummer EAN",
             "Anbieter Artikelnummer AAN",
+            "Hersteller",
             "Produktbild-URL",
+            "Vorschaubild-URL",
             "Produktkategorie",
             "Versandkosten Allgemein",
-            "Lieferzeit",
-            "Inhalt",
-            "Grundpreis",
-            "Grundpreiseinheit"
+            "Lieferzeit"
         ];
 
         // 4) Zeilen durchgehen und assoziative Arrays aufbauen
