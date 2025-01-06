@@ -3,7 +3,7 @@
  * Autor:    Sebastian Gräbner (sebastian@ju.nu)
  * Firma:    JUNU Marketing Group LTD
  * Datum:    2025-01-05
- * Zweck:    Service-Klasse zum Einlesen und Parsen von CSV-Dateien.
+ * Zweck:    Service-Klasse zum Einlesen und ggf. Entpacken von CSV-Dateien aus einer GZIP.
  */
 
 namespace JUNU\ShopwareAffiliateSync\Service;
@@ -28,9 +28,10 @@ final class CsvService
     }
 
     /**
-     * Lädt eine semikolon-getrennte CSV-Datei, parst sie und garantiert bestimmte Spalten.
+     * Lädt eine semikolon-getrennte CSV-Datei (ggf. aus einer GZIP), entpackt sie, 
+     * parst sie und garantiert bestimmte Spalten.
      *
-     * @param string $csvUrl      URL zur CSV-Datei
+     * @param string $csvUrl      URL zur CSV- (oder GZIP-)Datei
      * @param string $csvMapping  z.B. "ext_Foo=Foo|ext_Bar=Bar"
      *
      * @return array Ein Array assoziativer Arrays (Zeilen).
@@ -44,31 +45,70 @@ final class CsvService
 
         $this->logger->info("Lade CSV von: {$csvUrl}");
 
+        // 1) Datei herunterladen (ob .gz oder .csv ist egal)
         $content = @\file_get_contents($csvUrl);
         if ($content === false) {
             $this->logger->error("CSV-Download fehlgeschlagen von {$csvUrl}");
             return [];
         }
 
+        // 2) Prüfen, ob es sich um eine GZIP-Datei handelt (z. B. am Dateinamen ".gz")
+        $extension = \pathinfo($csvUrl, \PATHINFO_EXTENSION); 
+        if ($extension === 'gz') {
+            $this->logger->info("GZIP-Datei erkannt. Entpacke zunächst ...");
+            
+            // Temporäre Dateien erzeugen
+            $tmpGz  = \tempnam(\sys_get_temp_dir(), 'csv_') . '.gz';
+            $tmpCsv = \tempnam(\sys_get_temp_dir(), 'csv_') . '.csv';
+
+            // GZ-Inhalt speichern
+            \file_put_contents($tmpGz, $content);
+
+            // Entpacken per Shell-Kommando (gzip -cd ...)
+            $cmd = \sprintf('gzip -cd %s > %s', \escapeshellarg($tmpGz), \escapeshellarg($tmpCsv));
+            \exec($cmd, $output, $returnVar);
+
+            if ($returnVar !== 0) {
+                $this->logger->error("Fehler beim Entpacken der GZIP-Datei: Exit-Code $returnVar");
+                // Temporäre Dateien löschen und Abbruch
+                @\unlink($tmpGz);
+                @\unlink($tmpCsv);
+                return [];
+            }
+
+            // Entpacktes CSV auslesen
+            $content = @\file_get_contents($tmpCsv);
+            if ($content === false) {
+                $this->logger->error("Fehler beim Lesen der entpackten CSV-Datei.");
+                @\unlink($tmpGz);
+                @\unlink($tmpCsv);
+                return [];
+            }
+
+            // Temporäre Dateien wieder löschen
+            @\unlink($tmpGz);
+            @\unlink($tmpCsv);
+        }
+
+        // 3) Jetzt den CSV-Content ganz normal verarbeiten
         // In Zeilen aufspalten
         $lines = \str_getcsv($content, "\n");
         if (\count($lines) < 2) {
-            $this->logger->error("Die CSV unter {$csvUrl} enthält zu wenige Zeilen.");
+            $this->logger->error("Die CSV enthält zu wenige Zeilen oder ist leer.");
             return [];
         }
 
-        // Header parsen
+        // 3.1) Header parsen
         $headers = \str_getcsv(\array_shift($lines), ';', '"');
         $headers = \array_map('trim', $headers);
 
-        // Header-Index bauen
+        // Header-Index bauen (optional, hier nur Info)
         $headerIndex = [];
         foreach ($headers as $idx => $hName) {
             $headerIndex[$hName] = $idx;
         }
 
-        // Spalten-Mapping parsen
-        // Bsp: "ext_Foo=Foo|ext_Bar=Bar" => ext_Foo -> Foo
+        // 3.2) Spalten-Mapping parsen (z. B. "ext_Foo=Foo|ext_Bar=Bar" => ext_Foo -> Foo)
         $mappingPairs   = \explode('|', $csvMapping);
         $columnMappings = [];
         foreach ($mappingPairs as $pair) {
@@ -82,7 +122,7 @@ final class CsvService
             }
         }
 
-        // Muss-Spalten (falls nicht vorhanden => leer)
+        // 3.3) Muss-Spalten definieren
         $mustHaveCols = [
             "Deeplink",
             "Produkt-Titel",
@@ -101,19 +141,19 @@ final class CsvService
             "Grundpreiseinheit"
         ];
 
+        // 4) Zeilen durchgehen und assoziative Arrays aufbauen
         $rows = [];
         foreach ($lines as $line) {
             $cols = \str_getcsv($line, ';', '"');
-            $data = [];
 
-            // Muss-Spalten absichern
+            $data = [];
+            // Muss-Spalten mit leeren Strings initialisieren
             foreach ($mustHaveCols as $colName) {
                 $data[$colName] = "";
             }
 
-            // Header zuordnen
+            // Header zuordnen, defensiv
             foreach ($headers as $hdrIndex => $hdrName) {
-                // defensiv prüfen
                 $data[$hdrName] = $cols[$hdrIndex] ?? '';
             }
 
