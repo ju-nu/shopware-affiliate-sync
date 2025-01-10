@@ -316,7 +316,7 @@ sendNoCacheHeaders();
         }
 
         // Fetch log data every 5 seconds
-        setInterval(fetchLog, 5000);
+        setInterval(fetchLog, 2500);
 
         // Fetch log data on initial page load
         window.onload = fetchLog;
