@@ -3,7 +3,7 @@
 $logFile = 'app.log';
 
 // Number of lines to display
-$linesToDisplay = 500;
+$linesToDisplay = 100;
 
 // Function to send no-cache headers
 function sendNoCacheHeaders() {
@@ -281,7 +281,10 @@ sendNoCacheHeaders();
                 }
 
                 const logContainer = document.getElementById('logContent');
-                logContainer.innerHTML = ''; // Clear existing content
+                const shouldScroll = isScrolledToBottom(logContainer);
+
+                // Clear existing content
+                logContainer.innerHTML = '';
 
                 let hasErrors = false;
 
@@ -297,26 +300,30 @@ sendNoCacheHeaders();
                     }
                 });
 
-                // Auto-scroll logic
-                if (hasErrors) {
-                    // Scroll to the last error
-                    const errorElements = document.getElementsByClassName('log-ERROR');
-                    if (errorElements.length > 0) {
-                        const lastError = errorElements[errorElements.length - 1];
-                        lastError.scrollIntoView({ behavior: 'smooth', block: 'end' });
-                    }
-                } else {
-                    // Scroll to the bottom
-                    logContainer.scrollTop = logContainer.scrollHeight;
+                // Manage auto-scrolling based on user interaction
+                if (shouldScroll) {
+                    scrollToBottom(logContainer);
                 }
-
             } catch (error) {
                 console.error('Failed to fetch log:', error);
             }
         }
 
+        // Function to check if the user is scrolled to the bottom
+        function isScrolledToBottom(element) {
+            const threshold = 10; // px
+            const position = element.scrollTop + element.clientHeight;
+            const height = element.scrollHeight;
+            return (height - position) <= threshold;
+        }
+
+        // Function to scroll to the bottom of the log container
+        function scrollToBottom(element) {
+            element.scrollTop = element.scrollHeight;
+        }
+
         // Fetch log data every 5 seconds
-        setInterval(fetchLog, 2500);
+        setInterval(fetchLog, 5000);
 
         // Fetch log data on initial page load
         window.onload = fetchLog;
