@@ -2,12 +2,6 @@
 // Define the path to the main log file
 $logFile = 'app.log';
 
-// (Optional) Define the path to the error log file
-$errorLogFile = 'error.log';
-
-// Number of lines to display
-$linesToDisplay = 50;
-
 // Function to send no-cache headers
 function sendNoCacheHeaders() {
     // HTTP/1.1
@@ -16,22 +10,6 @@ function sendNoCacheHeaders() {
     header("Pragma: no-cache");
     // Proxies
     header("Expires: 0");
-}
-
-// Function to get the last N lines of a file
-function tailFile($filepath, $lines = 50) {
-    $f = new SplFileObject($filepath, 'r');
-    $f->seek(PHP_INT_MAX);
-    $totalLines = $f->key();
-    $startLine = max($totalLines - $lines, 0);
-    $f->seek($startLine);
-
-    $output = '';
-    while (!$f->eof()) {
-        $output .= $f->current();
-        $f->next();
-    }
-    return $output;
 }
 
 // Function to parse a log line and extract log level
@@ -46,12 +24,6 @@ function parseLogLevel($line) {
     return 'INFO'; // Default level
 }
 
-// Function to save error lines to a separate error log file
-function saveErrorLine($errorLogFile, $line) {
-    // Append the error line to the error log file
-    file_put_contents($errorLogFile, $line, FILE_APPEND | LOCK_EX);
-}
-
 // Send no-cache headers
 sendNoCacheHeaders();
 
@@ -59,20 +31,18 @@ if (file_exists($logFile) && is_readable($logFile)) {
     // Set the Content-Type to HTML
     header('Content-Type: text/html; charset=utf-8');
 
-    // Fetch the last 50 lines of the log file
-    $logContent = tailFile($logFile, $linesToDisplay);
-
-    // Split the log content into individual lines
-    $logLines = explode("\n", trim($logContent));
-
     // Initialize an array to hold processed log entries
     $processedLogLines = [];
 
     // Variable to track if there are any errors
     $hasErrors = false;
 
-    foreach ($logLines as $line) {
-        if (empty($line)) {
+    // Open the log file for reading
+    $file = new SplFileObject($logFile, 'r');
+
+    while (!$file->eof()) {
+        $line = $file->fgets();
+        if (trim($line) === '') {
             continue; // Skip empty lines
         }
 
@@ -84,10 +54,6 @@ if (file_exists($logFile) && is_readable($logFile)) {
 
         if ($isError) {
             $hasErrors = true;
-
-            // (Optional) Save the error line to a separate error log
-            // Uncomment the following line if you want to enable this feature
-            // saveErrorLine($errorLogFile, $line . "\n");
         }
 
         // Add the line with its level to the processed log lines
@@ -103,7 +69,7 @@ if (file_exists($logFile) && is_readable($logFile)) {
     <html lang="en">
     <head>
         <meta charset="UTF-8">
-        <title>App Log - Last <?php echo $linesToDisplay; ?> Lines</title>
+        <title>App Log - Entire Log</title>
         <!-- Auto-refresh every 5 seconds -->
         <meta http-equiv="refresh" content="5">
         <style>
@@ -111,18 +77,21 @@ if (file_exists($logFile) && is_readable($logFile)) {
                 font-family: monospace;
                 background-color: #f0f0f0;
                 padding: 20px;
+                margin: 0;
             }
-            pre {
+            .log-container {
                 background-color: #fff;
                 padding: 15px;
                 border: 1px solid #ccc;
-                height: 80vh;
+                height: 90vh;
                 overflow-y: scroll;
                 white-space: pre-wrap; /* Allows line wrapping */
                 word-wrap: break-word; /* Break long words */
+                box-sizing: border-box;
             }
             h1 {
                 text-align: center;
+                margin-top: 0;
             }
             /* Styling for different log levels */
             .log-DEBUG { color: gray; }
@@ -135,7 +104,7 @@ if (file_exists($logFile) && is_readable($logFile)) {
         </style>
         <script>
             window.onload = function() {
-                var pre = document.getElementById('logContent');
+                var logContainer = document.getElementById('logContent');
 
                 <?php if ($hasErrors): ?>
                     // If there are error lines, scroll to the last error
@@ -143,29 +112,32 @@ if (file_exists($logFile) && is_readable($logFile)) {
                     if (errorLines.length > 0) {
                         var lastError = errorLines[errorLines.length - 1];
                         lastError.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                    } else {
+                        // If no ERROR level but other higher levels
+                        logContainer.scrollTop = logContainer.scrollHeight;
                     }
                 <?php else: ?>
                     // Otherwise, scroll to the bottom
-                    pre.scrollTop = pre.scrollHeight;
+                    logContainer.scrollTop = logContainer.scrollHeight;
                 <?php endif; ?>
             };
         </script>
     </head>
     <body>
-        <h1>App Log - Last <?php echo $linesToDisplay; ?> Lines</h1>
-        <pre id="logContent">
-<?php
-foreach ($processedLogLines as $entry) {
-    $cssClass = 'log-' . $entry['level'];
-    // Ensure that only predefined classes are used to prevent CSS injection
-    $allowedClasses = ['log-DEBUG', 'log-INFO', 'log-WARNING', 'log-ERROR', 'log-CRITICAL', 'log-ALERT', 'log-EMERGENCY'];
-    if (!in_array($cssClass, $allowedClasses)) {
-        $cssClass = 'log-INFO'; // Default to INFO if unknown level
+        <h1>App Log - Entire Log</h1>
+        <div class="log-container" id="logContent">
+    <?php
+    foreach ($processedLogLines as $entry) {
+        $cssClass = 'log-' . $entry['level'];
+        // Ensure that only predefined classes are used to prevent CSS injection
+        $allowedClasses = ['log-DEBUG', 'log-INFO', 'log-WARNING', 'log-ERROR', 'log-CRITICAL', 'log-ALERT', 'log-EMERGENCY'];
+        if (!in_array($cssClass, $allowedClasses)) {
+            $cssClass = 'log-INFO'; // Default to INFO if unknown level
+        }
+        echo '<span class="' . $cssClass . '">' . $entry['line'] . '</span>';
     }
-    echo '<span class="' . $cssClass . '">' . $entry['line'] . '</span>' . "\n";
-}
-?>
-        </pre>
+    ?>
+        </div>
     </body>
     </html>
     <?php
@@ -192,6 +164,7 @@ foreach ($processedLogLines as $entry) {
                 justify-content: center;
                 align-items: center;
                 height: 100vh;
+                margin: 0;
             }
             .error-container {
                 border: 1px solid #f5c6cb;
@@ -200,6 +173,7 @@ foreach ($processedLogLines as $entry) {
                 border-radius: 5px;
                 max-width: 600px;
                 text-align: center;
+                box-sizing: border-box;
             }
             h1 {
                 margin-bottom: 10px;
