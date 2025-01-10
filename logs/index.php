@@ -3,7 +3,7 @@
 $logFile = 'app.log';
 
 // Number of lines to display
-$linesToDisplay = 100;
+$linesToDisplay = 200;
 
 // Function to send no-cache headers
 function sendNoCacheHeaders() {
