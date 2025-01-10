@@ -7,7 +7,7 @@ composer.lock
 *.iml
 
 # -- Logs --
-logs/*
+logs/*.log
 !logs/.gitkeep
 
 # -- Env Files --
