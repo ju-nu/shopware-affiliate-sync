@@ -87,29 +87,62 @@ if (file_exists($logFile) && is_readable($logFile)) {
         <!-- Auto-refresh every 5 seconds -->
         <meta http-equiv="refresh" content="5">
         <style>
-            body {
+            /* Reset default margins and paddings */
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+
+            html, body {
+                height: 100%;
+                width: 100%;
+                overflow: hidden; /* Prevent page scrolling */
                 font-family: 'Courier New', Courier, monospace;
                 background-color: #ffffff; /* White background */
-                padding: 20px;
-                margin: 0;
             }
-            .log-container {
+
+            /* Flex container to center content */
+            body {
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                padding: 20px; /* Space on the sides */
+            }
+
+            .log-wrapper {
+                width: 100%;
+                max-width: 1200px; /* Maximum width for large screens */
+                height: 90vh; /* Occupies 90% of viewport height */
                 background-color: #f9f9f9; /* Slightly off-white for contrast */
-                padding: 15px;
+                padding: 20px;
                 border: 1px solid #ddd;
-                height: 90vh;
-                overflow-y: scroll;
-                white-space: pre-wrap; /* Allows line wrapping */
-                word-wrap: break-word; /* Break long words */
-                box-sizing: border-box;
-                border-radius: 5px;
-                box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+                border-radius: 8px;
+                box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+                display: flex;
+                flex-direction: column;
             }
+
             h1 {
                 text-align: center;
-                margin-top: 0;
+                margin-bottom: 20px;
                 color: #333333;
+                font-size: 1.5em;
             }
+
+            .log-container {
+                flex: 1; /* Takes up remaining space */
+                background-color: #ffffff;
+                padding: 15px;
+                border: 1px solid #ccc;
+                border-radius: 5px;
+                overflow-y: scroll; /* Scroll only this container */
+                white-space: pre-wrap; /* Allows line wrapping */
+                word-wrap: break-word; /* Break long words */
+                font-size: 0.9em;
+                line-height: 1.4;
+            }
+
             /* Enhanced styling for different log levels */
             .log-DEBUG { 
                 color: #6c757d; /* Dark Gray */
@@ -151,6 +184,31 @@ if (file_exists($logFile) && is_readable($logFile)) {
                 border-radius: 3px;
                 font-weight: bold;
             }
+
+            /* Responsive adjustments */
+            @media (max-width: 768px) {
+                .log-wrapper {
+                    padding: 15px;
+                }
+                h1 {
+                    font-size: 1.2em;
+                }
+                .log-container {
+                    font-size: 0.85em;
+                }
+            }
+
+            @media (max-width: 480px) {
+                .log-wrapper {
+                    padding: 10px;
+                }
+                h1 {
+                    font-size: 1em;
+                }
+                .log-container {
+                    font-size: 0.8em;
+                }
+            }
         </style>
         <script>
             window.onload = function() {
@@ -174,8 +232,9 @@ if (file_exists($logFile) && is_readable($logFile)) {
         </script>
     </head>
     <body>
-        <h1>App Log - Last <?php echo $linesToDisplay; ?> Lines</h1>
-        <div class="log-container" id="logContent">
+        <div class="log-wrapper">
+            <h1>App Log - Last <?php echo $linesToDisplay; ?> Lines</h1>
+            <div class="log-container" id="logContent">
     <?php
     foreach ($processedLogLines as $entry) {
         $cssClass = 'log-' . $entry['level'];
@@ -187,6 +246,7 @@ if (file_exists($logFile) && is_readable($logFile)) {
         echo '<span class="' . $cssClass . '">' . $entry['line'] . '</span>';
     }
     ?>
+            </div>
         </div>
     </body>
     </html>
@@ -205,39 +265,80 @@ if (file_exists($logFile) && is_readable($logFile)) {
         <!-- Auto-refresh the 404 page every 5 seconds -->
         <meta http-equiv="refresh" content="5">
         <style>
-            body {
+            /* Reset default margins and paddings */
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+
+            html, body {
+                height: 100%;
+                width: 100%;
+                overflow: hidden; /* Prevent page scrolling */
                 font-family: Arial, sans-serif;
                 background-color: #f8d7da;
-                color: #721c24;
-                padding: 20px;
+            }
+
+            /* Flex container to center content */
+            body {
                 display: flex;
                 justify-content: center;
                 align-items: center;
-                height: 100vh;
-                margin: 0;
+                padding: 20px; /* Space on the sides */
             }
-            .error-container {
-                border: 1px solid #f5c6cb;
+
+            .error-wrapper {
+                width: 100%;
+                max-width: 600px; /* Maximum width for large screens */
                 background-color: #f8d7da;
                 padding: 30px;
-                border-radius: 5px;
-                max-width: 600px;
+                border: 1px solid #f5c6cb;
+                border-radius: 8px;
+                box-shadow: 0 4px 8px rgba(0,0,0,0.1);
                 text-align: center;
-                box-sizing: border-box;
-                box-shadow: 0 2px 5px rgba(0,0,0,0.1);
             }
+
             h1 {
-                margin-bottom: 10px;
+                margin-bottom: 15px;
                 color: #721c24;
+                font-size: 1.5em;
             }
+
             p {
-                margin: 5px 0;
+                margin: 10px 0;
                 color: #721c24;
+                font-size: 1em;
+            }
+
+            /* Responsive adjustments */
+            @media (max-width: 768px) {
+                .error-wrapper {
+                    padding: 20px;
+                }
+                h1 {
+                    font-size: 1.2em;
+                }
+                p {
+                    font-size: 0.9em;
+                }
+            }
+
+            @media (max-width: 480px) {
+                .error-wrapper {
+                    padding: 15px;
+                }
+                h1 {
+                    font-size: 1em;
+                }
+                p {
+                    font-size: 0.85em;
+                }
             }
         </style>
     </head>
     <body>
-        <div class="error-container">
+        <div class="error-wrapper">
             <h1>404 Not Found</h1>
             <p>The requested log file does not exist.</p>
             <p>This page will refresh every 5 seconds.</p>
